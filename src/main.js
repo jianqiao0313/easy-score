@@ -9,7 +9,8 @@ import './style.css';
 const $ = (selector) => document.querySelector(selector);
 const ui = {
   engineDot: $('#engineDot'), engineStatus: $('#engineStatus'), uploadButton: $('#uploadButton'), emptyUploadButton: $('#emptyUploadButton'), fileInput: $('#fileInput'),
-  demoSection: $('#demoSection'), demoButton: $('#demoButton'), emptyDemoButton: $('#emptyDemoButton'), dropZone: $('#dropZone'), dropOverlay: $('#dropOverlay'), emptyState: $('#emptyState'),
+  historyList: $('#historyList'), historyCount: $('#historyCount'), historyStatus: $('#historyStatus'), historyRetry: $('#historyRetry'), historyItemTemplate: $('#historyItemTemplate'),
+  dropZone: $('#dropZone'), dropOverlay: $('#dropOverlay'), emptyState: $('#emptyState'),
   processingState: $('#processingState'), errorState: $('#errorState'), errorMessage: $('#errorMessage'), retryButton: $('#retryButton'), progressNumber: $('#progressNumber'),
   progressBar: $('#progressBar'), jobStatusLabel: $('#jobStatusLabel'), jobStatusTitle: $('#jobStatusTitle'), jobStatusMessage: $('#jobStatusMessage'), scoreView: $('#scoreView'),
   pdfView: $('#pdfView'), pdfFrame: $('#pdfFrame'), osmdContainer: $('#osmdContainer'), scoreTab: $('#scoreTab'), pdfTab: $('#pdfTab'),
@@ -34,6 +35,7 @@ let currentTab = 'score';
 let cursorBeat = -1;
 let layoutRenderRequest = 0;
 let automaticLayoutWidth = 0;
+let historyRequest = 0;
 const preferences = loadPreferences();
 
 const player = new ScorePlayer({
@@ -93,6 +95,7 @@ function showError(message, action) {
 }
 
 function statusCopy(job) {
+  if (job.status === 'loading') return ['历史乐谱', '正在打开乐谱', '正在读取本地保存的识别结果。'];
   if (job.status === 'queued') return ['等待识别', '乐谱已进入处理队列', job.message || '正在等待识谱引擎。'];
   return ['正在识别', '正在把乐谱转换为可播放音符', job.message || '页数较多时可能需要几分钟，请保持此页面打开。'];
 }
@@ -105,7 +108,7 @@ function showJob(job) {
   ui.jobStatusLabel.textContent = label;
   ui.jobStatusTitle.textContent = title;
   ui.jobStatusMessage.textContent = message;
-  ui.scoreOrigin.textContent = activeJobSource === 'demo' ? '缓存的真实识别示例' : '本次识别任务';
+  ui.scoreOrigin.textContent = activeJobSource === 'history' ? '本地历史乐谱' : '本次识别任务';
   ui.scoreTitle.textContent = job.fileName || '正在读取乐谱';
   ui.scoreComposer.textContent = `${progress}% · OMR 结果可能需要对照原谱校验`;
   setView('processingState');
@@ -122,33 +125,71 @@ async function checkHealth() {
   try {
     const health = await fetchJson('/api/health');
     const available = Boolean(health.engine?.available);
-    setDemoAvailability(Boolean(health.demoAvailable));
     ui.engineDot.classList.toggle('is-online', available);
     ui.engineDot.classList.toggle('is-warning', !available);
     ui.engineStatus.textContent = available ? `${health.engine.name || '识谱引擎'} 已就绪` : (health.engine?.message || '识谱引擎不可用');
   } catch {
-    setDemoAvailability(false);
     ui.engineDot.classList.add('is-warning');
     ui.engineStatus.textContent = '暂时无法连接识谱服务';
   }
 }
 
-function setDemoAvailability(available) {
-  ui.demoSection.hidden = !available;
-  ui.emptyDemoButton.hidden = !available;
+function updateHistorySelection() {
+  for (const button of ui.historyList.querySelectorAll('[data-score-id]')) {
+    const selected = Boolean(score && button.dataset.scoreId === activeJob?.id);
+    button.classList.toggle('is-active', selected);
+    if (selected) button.setAttribute('aria-current', 'true');
+    else button.removeAttribute('aria-current');
+  }
 }
 
-async function loadDemo() {
-  const request = ++activeRequest;
-  retryAction = loadDemo;
-  resetLoadedState();
-  activeJobSource = 'demo';
+async function refreshHistory() {
+  const request = ++historyRequest;
+  ui.historyRetry.hidden = true;
   try {
-    const job = await fetchJson('/api/demo');
+    const { scores } = await fetchJson('/api/scores');
+    if (request !== historyRequest) return;
+    if (!Array.isArray(scores)) throw new Error('历史乐谱数据格式错误');
+    const items = scores.map((job) => {
+      const item = ui.historyItemTemplate.content.cloneNode(true);
+      const button = item.querySelector('button');
+      button.dataset.scoreId = job.id;
+      button.title = job.fileName;
+      item.querySelector('strong').textContent = job.fileName;
+      const date = new Date(job.createdAt);
+      item.querySelector('small').textContent = Number.isFinite(date.getTime()) ? `${date.toLocaleDateString('zh-CN')} · 已识别` : '已识别';
+      button.addEventListener('click', () => loadHistoryScore(job));
+      return item;
+    });
+    ui.historyList.replaceChildren(...items);
+    ui.historyCount.textContent = String(scores.length);
+    ui.historyStatus.textContent = '暂无历史乐谱，导入 PDF 识别成功后会显示在这里。';
+    ui.historyStatus.hidden = scores.length > 0;
+    updateHistorySelection();
+  } catch {
+    if (request !== historyRequest) return;
+    ui.historyStatus.textContent = '历史乐谱读取失败，请重试。';
+    ui.historyStatus.hidden = false;
+    ui.historyRetry.hidden = false;
+  }
+}
+
+async function loadHistoryScore(entry) {
+  if (score && activeJob?.id === entry.id) return setTab('score');
+  const request = ++activeRequest;
+  const retry = () => loadHistoryScore(entry);
+  retryAction = retry;
+  resetLoadedState();
+  activeJobSource = 'history';
+  showJob({ status: 'loading', progress: 100, fileName: entry.fileName });
+  try {
+    const job = await fetchJson(`/api/jobs/${encodeURIComponent(entry.id)}`);
     if (request !== activeRequest) return;
-    await handleJob(job, request);
+    if (job.status !== 'done') throw new Error('这份乐谱的识别结果尚未就绪。');
+    await loadCompletedJob(job, request);
   } catch (error) {
-    if (request === activeRequest) showError(`示例尚未准备好：${error.message}`, loadDemo);
+    if (request === activeRequest) showError(`历史乐谱打开失败：${error.message}`, retry);
+    void refreshHistory();
   }
 }
 
@@ -173,7 +214,6 @@ async function uploadFile(file) {
       headers: { 'Content-Type': 'application/pdf', 'X-File-Name': encodeURIComponent(file.name) },
       body: file,
     });
-    if (request !== activeRequest) return;
     await handleJob({ ...job, fileName: job.fileName || file.name }, request);
   } catch (error) {
     if (request === activeRequest) showError(`导入失败：${error.message}`, () => uploadFile(file));
@@ -183,15 +223,17 @@ async function uploadFile(file) {
 }
 
 async function handleJob(job, request) {
-  activeJob = job;
-  if (job.status === 'error') throw new Error(job.message || '识谱未能完成');
-  if (job.status === 'done') return loadCompletedJob(job, request);
-  showJob(job);
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  if (request !== activeRequest) return;
-  const next = await fetchJson(`/api/jobs/${encodeURIComponent(job.id)}`);
-  if (request !== activeRequest) return;
-  return handleJob(next, request);
+  while (true) {
+    if (job.status === 'error') throw new Error(job.message || '识谱未能完成');
+    if (job.status === 'done') {
+      void refreshHistory();
+      if (request === activeRequest) return loadCompletedJob(job, request);
+      return;
+    }
+    if (request === activeRequest) showJob(job);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    job = await fetchJson(`/api/jobs/${encodeURIComponent(job.id)}`);
+  }
 }
 
 async function loadCompletedJob(job, request) {
@@ -215,6 +257,7 @@ async function loadCompletedJob(job, request) {
   player.setVolume(Number(ui.volumeRange.value) / 100);
   setPdfSource(pdfUrl);
   populateScore(job);
+  updateHistorySelection();
   setTab('score');
 }
 
@@ -326,7 +369,7 @@ function populateScore(job) {
   const title = parsedTitle && parsedTitle !== '未命名乐谱' ? parsedTitle : (job.fileName || '未命名乐谱');
   const composer = score.composer?.trim() || '作曲者未标注';
   const bpm = Math.max(30, Math.min(240, Math.round(score.tempo || 96)));
-  ui.scoreOrigin.textContent = activeJobSource === 'demo' ? '真实 PDF · 已缓存识别结果' : '真实 PDF · 本次识别结果';
+  ui.scoreOrigin.textContent = activeJobSource === 'history' ? '真实 PDF · 本地历史乐谱' : '真实 PDF · 本次识别结果';
   ui.scoreTitle.textContent = title;
   ui.scoreComposer.textContent = composer;
   ui.nowPlayingTitle.textContent = title;
@@ -357,6 +400,8 @@ function resetLoadedState() {
   player.stop();
   releaseOsmd();
   score = null;
+  activeJob = null;
+  updateHistorySelection();
   xmlText = '';
   cursorBeat = -1;
   ui.scoreMeta.hidden = true;
@@ -498,8 +543,8 @@ function exportXml() {
 ui.uploadButton.addEventListener('click', () => ui.fileInput.click());
 ui.emptyUploadButton.addEventListener('click', () => ui.fileInput.click());
 ui.fileInput.addEventListener('change', () => uploadFile(ui.fileInput.files[0]));
-ui.demoButton.addEventListener('click', loadDemo);
-ui.emptyDemoButton.addEventListener('click', loadDemo);
+ui.historyRetry.addEventListener('click', refreshHistory);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshHistory(); });
 ui.retryButton.addEventListener('click', () => retryAction?.());
 ui.scoreTab.addEventListener('click', () => setTab('score'));
 ui.pdfTab.addEventListener('click', () => setTab('pdf'));
@@ -568,3 +613,4 @@ window.addEventListener('beforeunload', () => {
 });
 
 checkHealth();
+void refreshHistory();

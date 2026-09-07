@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createAudiverisEngine } from './engine.mjs';
 
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const SAFE_JOB_ID = /^[A-Za-z0-9_-]+$/;
 
 function json(response, status, value) {
   const body = JSON.stringify(value);
@@ -62,7 +63,11 @@ function safeFileName(header) {
   return fileName || 'score.pdf';
 }
 
-function publicJob(job) {
+function validTimestamp(value) {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function publicJob(job, { includeTimestamps = false } = {}) {
   const result = {
     id: job.id,
     status: job.status,
@@ -75,7 +80,23 @@ function publicJob(job) {
     result.pdfUrl = `/api/jobs/${job.id}/source.pdf`;
   }
   if (job.warnings?.length) result.warnings = job.warnings;
+  if (includeTimestamps && validTimestamp(job.createdAt)) result.createdAt = job.createdAt;
+  if (includeTimestamps && validTimestamp(job.updatedAt)) result.updatedAt = job.updatedAt;
   return result;
+}
+
+function isCompleteJobMetadata(job, directoryId) {
+  return job
+    && !Array.isArray(job)
+    && job.id === directoryId
+    && SAFE_JOB_ID.test(directoryId)
+    && job.status === 'done'
+    && Number.isFinite(job.progress)
+    && typeof job.message === 'string'
+    && typeof job.fileName === 'string'
+    && job.fileName.trim().length > 0
+    && (job.warnings === undefined
+      || (Array.isArray(job.warnings) && job.warnings.every((warning) => typeof warning === 'string')));
 }
 
 export class JobStore {
@@ -95,7 +116,8 @@ export class JobStore {
     for (const entry of await readdir(this.root, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const job = await this.load(entry.name);
-      if (!job || !['queued', 'processing'].includes(job.status)) continue;
+      if (!job || job.id !== entry.name || !SAFE_JOB_ID.test(entry.name)
+        || !['queued', 'processing'].includes(job.status)) continue;
       job.status = 'queued';
       job.progress = 5;
       job.message = '服务重启后重新排队';
@@ -149,6 +171,38 @@ export class JobStore {
     this.queue.push(id);
     void this.drain();
     return job;
+  }
+
+  async listScores() {
+    const entries = await readdir(this.root, { withFileTypes: true });
+    const candidates = await Promise.all(entries.map(async (entry) => {
+      if (!entry.isDirectory() || entry.name === 'demo' || !SAFE_JOB_ID.test(entry.name)) return null;
+      const directory = path.join(this.root, entry.name);
+      try {
+        const metadataPath = path.join(directory, 'job.json');
+        const [job, metadata, pdf, xml] = await Promise.all([
+          readFile(metadataPath, 'utf8').then(JSON.parse),
+          stat(metadataPath),
+          stat(path.join(directory, 'source.pdf')),
+          stat(path.join(directory, 'score.musicxml')),
+        ]);
+        if (!isCompleteJobMetadata(job, entry.name)
+          || !pdf.isFile() || pdf.size === 0
+          || !xml.isFile() || xml.size === 0) return null;
+        const newestTimestamp = validTimestamp(job.createdAt)
+          ? Date.parse(job.createdAt)
+          : validTimestamp(job.updatedAt) ? Date.parse(job.updatedAt) : metadata.mtimeMs;
+        return { job, newestTimestamp };
+      } catch {
+        return null;
+      }
+    }));
+
+    return candidates
+      .filter(Boolean)
+      .sort((left, right) => right.newestTimestamp - left.newestTimestamp
+        || left.job.id.localeCompare(right.job.id))
+      .map(({ job }) => publicJob(job, { includeTimestamps: true }));
   }
 
   async drain() {
@@ -233,6 +287,9 @@ export async function createApp({
         }
         const job = await store.create(safeFileName(request.headers['x-file-name']), body);
         return json(response, 202, { id: job.id, status: job.status, message: job.message });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/scores') {
+        return json(response, 200, { scores: await store.listScores() });
       }
       if (request.method === 'GET' && url.pathname === '/api/demo') {
         const job = await store.load('demo');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -27,6 +27,25 @@ async function fixture(t, engine) {
     await rm(temporary, { recursive: true, force: true });
   });
   return { ...app, base, demoRoot, jobsRoot };
+}
+
+async function serve(t, app) {
+  const server = createServer((request, response) => void app.handler(request, response));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(async () => {
+    server.close();
+    await once(server, 'close');
+  });
+  return `http://127.0.0.1:${server.address().port}`;
+}
+
+async function writeStoredJob(jobsRoot, directoryId, job, { pdf = TEST_PDF, xml = TEST_XML } = {}) {
+  const directory = path.join(jobsRoot, directoryId);
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, 'job.json'), typeof job === 'string' ? job : JSON.stringify(job));
+  if (pdf !== null) await writeFile(path.join(directory, 'source.pdf'), pdf);
+  if (xml !== null) await writeFile(path.join(directory, 'score.musicxml'), xml);
 }
 
 function fakeEngine(overrides = {}) {
@@ -121,6 +140,68 @@ test('a raw PDF job persists, reports progress, and serves XML and the original 
   assert.deepEqual(Buffer.from(await pdfResponse.arrayBuffer()), TEST_PDF);
   assert.deepEqual(await readFile(path.join(jobsRoot, queued.id, 'source.pdf')), TEST_PDF);
   assert.equal(JSON.parse(await readFile(path.join(jobsRoot, queued.id, 'job.json'))).status, 'done');
+});
+
+test('score listing returns only complete local imports newest first without exposing storage metadata', async (t) => {
+  const { base, jobsRoot } = await fixture(t, fakeEngine());
+  const oldId = '11111111-1111-4111-8111-111111111111';
+  const newId = '22222222-2222-4222-8222-222222222222';
+  const done = (id, fileName, dates = {}) => ({
+    id, status: 'done', progress: 100, message: '识别完成', fileName, warnings: ['校对提示'],
+    serverPath: '/private/jobs/secret', ...dates,
+  });
+  await writeStoredJob(jobsRoot, oldId, done(oldId, 'old.pdf', {
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-04-01T00:00:00.000Z',
+  }));
+  await writeStoredJob(jobsRoot, newId, done(newId, 'new.pdf', {
+    createdAt: '2026-03-01T00:00:00.000Z', updatedAt: '2026-02-01T00:00:00.000Z',
+  }));
+  await writeStoredJob(jobsRoot, 'mismatch', done('different-id', 'mismatch.pdf'));
+  await writeStoredJob(jobsRoot, 'error-job', { id: 'error-job', status: 'error' });
+  await writeStoredJob(jobsRoot, 'queued-job', { id: 'queued-job', status: 'queued' });
+  await writeStoredJob(jobsRoot, 'processing-job', { id: 'processing-job', status: 'processing' });
+  await writeStoredJob(jobsRoot, 'missing-pdf', done('missing-pdf', 'missing.pdf'), { pdf: null });
+  await writeStoredJob(jobsRoot, 'empty-xml', done('empty-xml', 'empty.xml.pdf'), { xml: '' });
+  await writeStoredJob(jobsRoot, 'malformed', '{broken json');
+  await writeStoredJob(jobsRoot, 'demo', done('demo', 'demo.pdf'));
+
+  const response = await fetch(`${base}/api/scores`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { scores: [
+    {
+      id: newId, status: 'done', progress: 100, message: '识别完成', fileName: 'new.pdf',
+      xmlUrl: `/api/jobs/${newId}/score.musicxml`, pdfUrl: `/api/jobs/${newId}/source.pdf`,
+      warnings: ['校对提示'], createdAt: '2026-03-01T00:00:00.000Z', updatedAt: '2026-02-01T00:00:00.000Z',
+    },
+    {
+      id: oldId, status: 'done', progress: 100, message: '识别完成', fileName: 'old.pdf',
+      xmlUrl: `/api/jobs/${oldId}/score.musicxml`, pdfUrl: `/api/jobs/${oldId}/source.pdf`,
+      warnings: ['校对提示'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-04-01T00:00:00.000Z',
+    },
+  ] });
+});
+
+test('completed imports remain listed after app restart without re-running conversion', async (t) => {
+  let conversions = 0;
+  const engine = fakeEngine({
+    async convert() {
+      conversions += 1;
+      return { xml: TEST_XML };
+    },
+  });
+  const { base, jobsRoot, demoRoot } = await fixture(t, engine);
+  const accepted = await fetch(`${base}/api/jobs`, {
+    method: 'POST', headers: { 'content-type': 'application/pdf' }, body: TEST_PDF,
+  }).then((response) => response.json());
+  await waitFor(base, accepted.id);
+  assert.equal(conversions, 1);
+
+  const restarted = await createApp({ jobsRoot, demoRoot, engine });
+  const restartedBase = await serve(t, restarted);
+  const scores = await fetch(`${restartedBase}/api/scores`).then((response) => response.json());
+  assert.equal(conversions, 1);
+  assert.equal(scores.scores.length, 1);
+  assert.equal(scores.scores[0].id, accepted.id);
 });
 
 test('the job queue never invokes more than one engine conversion concurrently', async (t) => {

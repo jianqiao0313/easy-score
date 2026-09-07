@@ -46,10 +46,14 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .upload-card strong { font-size: 13px; }
 .upload-card span:not(.upload-icon) { margin-top: 3px; color: #7f867f; font-size: 11px; }
 .upload-card small { margin-top: 12px; color: #a09c93; font-size: 9px; }
-.library-section { margin-top: 30px; }
+.library-section { min-width: 0; margin-top: 30px; }
+.history-list { margin: 0; padding: 0; list-style: none; }
+.history-list li + li { margin-top: 4px; }
+.history-status { margin: 12px 0; color: #7f867f; font-size: 11px; line-height: 1.7; }
 .section-label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: #8a8f89; font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-.score-item { width: 100%; display: grid; grid-template-columns: 48px 1fr auto; align-items: center; gap: 11px; padding: 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; text-align: left; cursor: pointer; }
+.score-item { width: 100%; display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; text-align: left; cursor: pointer; }
 .score-item:hover { border-color: #d6ded7; background: #ecf1eb; }
+.score-item.is-active { border-color: #789080; background: #e8eee7; }
 .score-thumb { width: 48px; height: 59px; display: grid; place-items: center; overflow: hidden; border: 1px solid #d8d4cb; border-radius: 3px; color: var(--green); background: white; box-shadow: 0 3px 8px rgba(0,0,0,.06); font-family: serif; font-size: 22px; }
 .score-item-copy { min-width: 0; }
 .score-item-copy strong, .score-item-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -148,7 +152,7 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 
 @media (max-width: 720px) {
   .topbar { height: 64px; padding: 0 16px; }.topbar-status { max-width: 145px; text-align: right; }.brand strong { font-size: 18px; }
-  .workspace { display: flex; flex-direction: column; }.library-panel { border-right: 0; border-bottom: 1px solid var(--line); }.library-panel .panel-heading, .library-note { display: none; }.library-panel { padding: 14px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; overflow: visible; }.upload-card { padding: 12px; }.upload-card small, .upload-card span:not(.upload-icon) { display: none; }.upload-icon { margin-bottom: 6px; }.library-section { margin: 0; }.library-section .section-label { display: none; }.score-thumb { height: 49px; width: 40px; }.score-item { grid-template-columns: 40px 1fr; }.score-arrow { display: none; }
+  .workspace { display: flex; flex-direction: column; }.library-panel { border-right: 0; border-bottom: 1px solid var(--line); }.library-panel .panel-heading, .library-note { display: none; }.library-panel { padding: 14px 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; overflow: visible; }.upload-card { padding: 12px; }.upload-card small, .upload-card span:not(.upload-icon) { display: none; }.upload-icon { margin-bottom: 6px; }.library-section { margin: 0; }.history-list { max-height: 210px; overflow-y: auto; }.score-thumb { height: 49px; width: 40px; }.score-item { grid-template-columns: 40px minmax(0, 1fr); }.score-arrow { display: none; }
   .score-stage { min-height: 620px; }.score-toolbar { padding: 14px 16px; align-items: flex-start; flex-direction: column; }.score-actions { width: 100%; flex-wrap: wrap; }.view-tabs { margin-left: auto; }.score-canvas-wrap { padding: 18px 10px; min-height: 470px; }.empty-state { min-height: 430px; }.score-meta { gap: 14px; overflow-x: auto; justify-content: flex-start; }.score-meta span { flex: 0 0 auto; }
   .practice-panel { display: block; padding: 25px 18px; }.control-section { padding: 16px 0; }.instrument-grid { grid-template-columns: 1fr 1fr; }.instrument-card { grid-template-columns: 30px 1fr; }.instrument-card i { display: none; }
   .transport { height: 106px; grid-template-columns: 1fr; padding: 9px 15px; }.now-playing, .transport-measure { display: none; }.transport-center { border: 0; }.timeline { width: 100%; }

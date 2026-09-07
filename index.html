@@ -36,13 +36,20 @@
           </button>
           <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
 
-          <div class="library-section" id="demoSection" hidden>
-            <div class="section-label"><span>示例乐谱</span><span>01</span></div>
-            <button class="score-item" id="demoButton" type="button">
-              <span class="score-thumb" aria-hidden="true">♪</span>
-              <span class="score-item-copy"><strong>示例乐谱</strong><small>服务提供的识别示例</small></span>
-              <span class="score-arrow" aria-hidden="true">→</span>
-            </button>
+          <div class="library-section" aria-labelledby="historyHeading">
+            <div class="section-label"><span id="historyHeading">历史乐谱</span><span id="historyCount">—</span></div>
+            <ul class="history-list" id="historyList" aria-label="历史乐谱"></ul>
+            <p class="history-status" id="historyStatus" role="status">正在读取历史乐谱…</p>
+            <button class="text-button" id="historyRetry" type="button" hidden>重新读取</button>
+            <template id="historyItemTemplate">
+              <li>
+                <button class="score-item" type="button">
+                  <span class="score-thumb" aria-hidden="true">♪</span>
+                  <span class="score-item-copy"><strong></strong><small></small></span>
+                  <span class="score-arrow" aria-hidden="true">→</span>
+                </button>
+              </li>
+            </template>
           </div>
 
           <div class="library-note">
@@ -88,7 +95,6 @@
               <p>easy-score 通过识谱服务处理 PDF，让你查看、聆听并按自己的速度练习。</p>
               <div class="empty-actions">
                 <button class="primary-button" id="emptyUploadButton" type="button">导入 PDF</button>
-                <button class="text-button" id="emptyDemoButton" type="button" hidden>打开示例 <span aria-hidden="true">→</span></button>
               </div>
             </section>
 

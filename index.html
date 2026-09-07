@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f0e7" />
+    <meta name="description" content="easy-score 是一款 PDF 乐谱识别与练习播放器。" />
+    <link rel="icon" href="/easy-score.svg" type="image/svg+xml" />
+    <title>easy-score · PDF 乐谱播放器</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <a class="brand" href="#workspace" aria-label="easy-score 首页">
+          <img class="brand-mark" src="/easy-score.svg" alt="" />
+          <span><strong>easy-score</strong><small>SHEET MUSIC PLAYER</small></span>
+        </a>
+        <div class="topbar-status">
+          <span class="engine-dot" id="engineDot" aria-hidden="true"></span>
+          <span id="engineStatus">正在检查本地识谱引擎…</span>
+        </div>
+      </header>
+
+      <main class="workspace" id="workspace">
+        <aside class="library-panel panel" aria-label="乐谱库">
+          <div class="panel-heading">
+            <p class="eyebrow">LIBRARY</p>
+            <h1>我的乐谱</h1>
+          </div>
+
+          <button class="upload-card" id="uploadButton" type="button">
+            <span class="upload-icon" aria-hidden="true">↗</span>
+            <strong>导入 PDF 乐谱</strong>
+            <span>点击选择或拖放到这里</span>
+            <small>印刷五线谱 · 最大 20 MB</small>
+          </button>
+          <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
+
+          <div class="library-section" id="demoSection" hidden>
+            <div class="section-label"><span>示例乐谱</span><span>01</span></div>
+            <button class="score-item" id="demoButton" type="button">
+              <span class="score-thumb" aria-hidden="true">♪</span>
+              <span class="score-item-copy"><strong>示例乐谱</strong><small>服务提供的识别示例</small></span>
+              <span class="score-arrow" aria-hidden="true">→</span>
+            </button>
+          </div>
+
+          <div class="library-note">
+            <span aria-hidden="true">i</span>
+            <p>OMR 识别可能出现漏音或节奏偏差。练习时请对照原谱校验。</p>
+          </div>
+        </aside>
+
+        <section class="score-stage" aria-label="乐谱工作区">
+          <div class="score-toolbar">
+            <div class="score-identity">
+              <p class="eyebrow" id="scoreOrigin">尚未载入乐谱</p>
+              <h2 id="scoreTitle">让纸上的旋律，再次流动</h2>
+              <p id="scoreComposer">导入印刷乐谱 PDF，识别后即可试听</p>
+            </div>
+            <div class="score-actions">
+              <div class="view-tabs" role="tablist" aria-label="预览方式">
+                <button class="tab is-active" id="scoreTab" role="tab" aria-selected="true" aria-controls="scoreView" type="button">识别乐谱</button>
+                <button class="tab" id="pdfTab" role="tab" aria-selected="false" aria-controls="pdfView" type="button">原始 PDF</button>
+              </div>
+              <button class="icon-button" id="exportButton" type="button" disabled aria-label="导出 MusicXML" title="导出 MusicXML">↓</button>
+            </div>
+          </div>
+
+          <div class="score-canvas-wrap" id="dropZone">
+            <section class="empty-state" id="emptyState">
+              <div class="empty-emblem" aria-hidden="true"><span>♪</span></div>
+              <p class="eyebrow">YOUR SCORE, YOUR TEMPO</p>
+              <h2>从一页乐谱开始</h2>
+              <p>easy-score 通过识谱服务处理 PDF，让你查看、聆听并按自己的速度练习。</p>
+              <div class="empty-actions">
+                <button class="primary-button" id="emptyUploadButton" type="button">导入 PDF</button>
+                <button class="text-button" id="emptyDemoButton" type="button" hidden>打开示例 <span aria-hidden="true">→</span></button>
+              </div>
+            </section>
+
+            <section class="processing-state" id="processingState" hidden aria-live="polite">
+              <div class="processing-ring" aria-hidden="true"><span id="progressNumber">0</span><small>%</small></div>
+              <p class="eyebrow" id="jobStatusLabel">正在准备</p>
+              <h2 id="jobStatusTitle">正在读取乐谱</h2>
+              <p id="jobStatusMessage">识谱服务正在处理，请稍候。</p>
+              <div class="progress-track"><span id="progressBar"></span></div>
+            </section>
+
+            <section class="error-state" id="errorState" hidden role="alert">
+              <span class="error-symbol" aria-hidden="true">!</span>
+              <p class="eyebrow">无法载入</p>
+              <h2>这份乐谱暂时没有打开</h2>
+              <p id="errorMessage"></p>
+              <button class="secondary-button" id="retryButton" type="button">重试</button>
+            </section>
+
+            <div class="score-view" id="scoreView" role="tabpanel" aria-labelledby="scoreTab" hidden>
+              <div id="osmdContainer" aria-label="识别后的乐谱"></div>
+            </div>
+            <div class="pdf-view" id="pdfView" role="tabpanel" aria-labelledby="pdfTab" hidden>
+              <iframe id="pdfFrame" title="原始 PDF 预览"></iframe>
+            </div>
+            <div class="drop-overlay" id="dropOverlay" aria-hidden="true"><strong>松开以导入乐谱</strong><span>PDF 将发送到当前识谱服务</span></div>
+          </div>
+
+          <div class="score-meta" id="scoreMeta" hidden>
+            <span><small>拍号</small><strong id="timeSignature">—</strong></span>
+            <span><small>调号</small><strong id="keySignature">—</strong></span>
+            <span><small>小节</small><strong id="measureCount">—</strong></span>
+            <span><small>识别提示</small><strong id="warningCount">—</strong></span>
+          </div>
+          <details class="warning-details" id="warningDetails" hidden>
+            <summary>查看识别校对提示</summary>
+            <ul id="warningList"></ul>
+          </details>
+        </section>
+
+        <aside class="practice-panel panel" aria-label="练习设置">
+          <div class="panel-heading">
+            <p class="eyebrow">PRACTICE</p>
+            <h2>练习设置</h2>
+          </div>
+
+          <section class="control-section">
+            <div class="section-label"><span>演奏音色</span><span id="soundSource">等待乐谱</span></div>
+            <div class="instrument-grid" id="instrumentGroup" role="radiogroup" aria-label="选择演奏音色">
+              <button class="instrument-card is-active" type="button" role="radio" aria-checked="true" data-instrument="piano">
+                <span class="instrument-glyph" aria-hidden="true">♬</span><span><strong>钢琴</strong><small>柔和 · 清晰</small></span><i aria-hidden="true"></i>
+              </button>
+              <button class="instrument-card" type="button" role="radio" aria-checked="false" data-instrument="saxophone">
+                <span class="instrument-glyph sax" aria-hidden="true">𝄞</span><span><strong>萨克斯</strong><small>温暖 · 连贯</small></span><i aria-hidden="true"></i>
+              </button>
+            </div>
+          </section>
+
+          <section class="control-section tempo-section">
+            <div class="section-label"><span>速度</span><span id="tempoMark">♩ = 96</span></div>
+            <div class="tempo-display"><button id="tempoDown" type="button" aria-label="速度减 2">−</button><label><input id="tempoInput" type="number" min="30" max="240" value="96" aria-label="每分钟节拍数" /><span>BPM</span></label><button id="tempoUp" type="button" aria-label="速度加 2">＋</button></div>
+            <input class="range" id="tempoRange" type="range" min="30" max="240" value="96" aria-label="速度" />
+            <div class="range-labels"><span>慢练 30</span><span>原速</span><span>240</span></div>
+          </section>
+
+          <section class="control-section">
+            <div class="toggle-row">
+              <span><strong>节拍器</strong><small>突出每小节第一拍</small></span>
+              <button class="switch" id="metronomeToggle" type="button" role="switch" aria-checked="false"><span></span><em>关闭</em></button>
+            </div>
+          </section>
+
+          <section class="control-section volume-section">
+            <div class="section-label"><span>音量</span><span id="volumeValue">72%</span></div>
+            <div class="volume-row"><span aria-hidden="true">◖</span><input class="range" id="volumeRange" type="range" min="0" max="100" value="72" aria-label="音量" /><span aria-hidden="true">●</span></div>
+          </section>
+
+          <div class="practice-tip" id="practiceTip"><span aria-hidden="true">♩</span><p><strong>练习提示</strong>载入乐谱后，可从任意位置开始播放。</p></div>
+        </aside>
+      </main>
+
+      <footer class="transport" aria-label="播放控制">
+        <div class="now-playing">
+          <span class="mini-cover" aria-hidden="true">♪</span>
+          <span><strong id="nowPlayingTitle">等待乐谱</strong><small id="nowPlayingDetail">导入后即可开始练习</small></span>
+        </div>
+        <div class="transport-center">
+          <div class="transport-buttons">
+            <button id="stopButton" type="button" disabled aria-label="回到开头">↤</button>
+            <button class="play-button" id="playButton" type="button" disabled aria-label="播放"><span>▶</span></button>
+            <button id="forwardButton" type="button" disabled aria-label="向后移动一小节">↦</button>
+          </div>
+          <div class="timeline">
+            <span id="currentTime">0:00</span>
+            <input id="seekRange" type="range" min="0" max="1000" value="0" disabled aria-label="播放位置" />
+            <span id="totalTime">0:00</span>
+          </div>
+        </div>
+        <div class="transport-measure"><span>小节</span><strong id="currentMeasure">—</strong><small id="totalMeasures">/ —</small></div>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="512" height="512" viewBox="0 0 1254 1254"
+     fill="#0084FF" role="img" aria-labelledby="es-title es-desc">
+  <title id="es-title">easy-score</title>
+  <desc id="es-desc">Sheet music scanning and playback logo.</desc>
+
+  <defs>
+    <!-- Reusable vector letterforms: no font dependency. -->
+    <path id="es-e" fill-rule="evenodd" d="
+      M120 72H41C45 90 65 96 83 83
+      C87 80 90 78 94 82L111 99Q116 104 110 108
+      C97 119 81 124 63 124C27 124 0 101 0 63
+      C0 28 26 0 61 0C98 0 124 25 124 64V68Q124 72 120 72Z
+      M41 48H83C81 37 74 31 62 31C51 31 44 37 41 48Z"/>
+    <path id="es-s" d="
+      M93 16L80 37Q77 42 72 39C55 28 38 28 38 37
+      C38 44 49 46 63 51C85 58 96 69 96 87
+      C96 112 77 125 47 125C27 125 12 119 2 112
+      Q-1 110 2 106L16 84Q19 79 24 82
+      C45 95 57 96 57 88C57 82 48 80 32 74
+      C11 67 0 57 0 38C0 15 19 0 47 0
+      C65 0 80 5 92 11Q96 13 93 16Z"/>
+  </defs>
+
+  <!-- Scanning corners -->
+  <g fill="none" stroke="#0084FF" stroke-width="44"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M486 258H432A60 60 0 0 0 372 318V360"/>
+    <path d="M768 258H822A60 60 0 0 1 882 318V360"/>
+    <path d="M372 738V773A60 60 0 0 0 432 833H486"/>
+    <path d="M882 738V773A60 60 0 0 1 822 833H768"/>
+  </g>
+
+  <!-- Document outline and folded corner -->
+  <path d="M492 332H709L814 441V738
+           A44 44 0 0 1 770 782H488
+           A44 44 0 0 1 444 738V380
+           A48 48 0 0 1 492 332Z"
+        fill="none" stroke="#0084FF" stroke-width="38"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M695 332H709L814 441V462H735
+           A40 40 0 0 1 695 422Z"/>
+
+  <!-- Music note -->
+  <path d="M576 428C576 416 584 411 594 419
+           C612 434 630 443 649 458
+           C672 476 684 495 684 517
+           C684 540 671 559 652 568
+           C645 572 640 568 645 561
+           C654 547 655 532 648 519
+           C641 507 625 500 609 494V608
+           C609 633 597 655 576 668
+           C549 686 518 686 500 671
+           C486 658 484 638 494 619
+           C511 589 540 574 576 580Z"/>
+
+  <!-- Playback button; the triangle is transparent. -->
+  <path fill-rule="evenodd" d="
+    M785 682A80 80 0 1 1 625 682A80 80 0 1 1 785 682Z
+    M695 648L738 676Q747 682 738 688L695 717
+    Q684 725 684 713V654Q684 641 695 648Z"/>
+
+  <!-- Wordmark: easy-score, entirely vector paths -->
+  <g transform="translate(117 920)">
+    <use href="#es-e"/>
+    <path transform="translate(126)" fill-rule="evenodd" d="
+      M110 47V118Q110 122 106 122H76Q72 122 72 118V114
+      C63 121 51 125 38 125C15 125 0 111 0 91
+      C0 60 27 47 73 47C70 30 50 29 28 40
+      Q23 43 21 38L11 19Q9 14 13 12
+      C25 4 44 0 58 0C91 0 110 19 110 47Z
+      M73 74C48 73 38 80 38 88
+      C38 99 52 98 60 93C68 89 71 83 73 74Z"/>
+    <use href="#es-s" x="242"/>
+    <path transform="translate(335 4)" d="
+      M5 0H35Q38 0 40 5L63 62L87 5Q89 0 94 0H127
+      Q132 0 130 5L80 120C65 155 39 162 4 151
+      L1 148Q-1 146 0 142L7 122Q8 117 14 119
+      C30 124 38 120 42 109L45 102L1 5Q-1 0 5 0Z"/>
+    <rect x="457" y="48" width="52" height="36" rx="5"/>
+    <use href="#es-s" x="515"/>
+    <path transform="translate(608)" d="
+      M106 17L87 42Q84 46 80 42C73 35 67 33 60 33
+      C45 33 39 45 39 62C39 80 47 90 60 90
+      C68 90 74 88 80 82Q84 78 88 83L106 101
+      Q110 105 106 109C93 120 77 125 59 125
+      C24 125 0 102 0 63C0 26 25 0 60 0
+      C78 0 94 5 106 12Q110 15 106 17Z"/>
+    <path transform="translate(709)" fill-rule="evenodd" d="
+      M124 62C124 99 99 125 62 125C25 125 0 99 0 62
+      C0 25 25 0 62 0C99 0 124 25 124 62Z
+      M83 62C83 45 76 35 62 35C48 35 41 45 41 62
+      C41 80 48 90 62 90C76 90 83 80 83 62Z"/>
+    <path transform="translate(836 4)" d="
+      M5 0H30Q35 0 35 4V12C44 2 53 -5 65 -3
+      Q68 -2 68 2V29Q68 34 63 33
+      C48 31 40 42 40 64V112Q40 117 35 117H5
+      Q0 117 0 112V5Q0 0 5 0Z"/>
+    <use href="#es-e" x="900"/>
+  </g>
+</svg>

@@ -1,0 +1,13 @@
+.git
+.github
+.local
+.tmp
+.superpowers
+dist
+node_modules
+docs
+tests
+*.log
+.DS_Store
+public/samples/*.pdf
+public/samples/betop-preview.png

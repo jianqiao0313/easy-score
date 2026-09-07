@@ -1,0 +1,18 @@
+services:
+  easy-score:
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+    platform: linux/amd64
+    image: easy-score:local
+    environment:
+      OMR_TIMEOUT_MS: 600000
+    ports:
+      - "127.0.0.1:4173:4173"
+    volumes:
+      - easy-score-data:/data
+    restart: unless-stopped
+
+volumes:
+  easy-score-data:

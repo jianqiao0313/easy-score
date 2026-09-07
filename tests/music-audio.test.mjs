@@ -89,6 +89,17 @@ function loopBoundaryError(channel, sampleRate, startTime, endTime) {
   return error;
 }
 
+function levelSwing(channel, sampleRate, start, end) {
+  const levels = [];
+  const window = Math.round(sampleRate * 0.04);
+  for (let index = Math.round(start * sampleRate); index + window < end * sampleRate; index += window) {
+    let energy = 0;
+    for (let offset = 0; offset < window; offset += 1) energy += channel[index + offset] ** 2;
+    levels.push(Math.sqrt(energy / window));
+  }
+  return Math.max(...levels) / Math.min(...levels);
+}
+
 const score = {
   tempo: 120,
   timeSignature: { beats: 4, beatType: 4 },
@@ -223,7 +234,7 @@ test('ScorePlayer pitch-shifts the nearest audible alto sax sample when the requ
   await player.dispose();
 });
 
-test('ScorePlayer aligns the alto sax loop waveform and releases after the written note duration', async (t) => {
+test('ScorePlayer aligns the alto sax loop waveform and uses a short release after the written note duration', async (t) => {
   const originalAudioContext = globalThis.AudioContext;
   const originalFetch = globalThis.fetch;
   const originalDecode = FakeAudioContext.prototype.decodeAudioData;
@@ -254,6 +265,7 @@ test('ScorePlayer aligns the alto sax loop waveform and releases after the writt
   });
 
   const player = new ScorePlayer();
+  t.after(() => player.dispose());
   await player.load({ ...score, notes: [{ ...score.notes[0], durationBeats: 2 }] });
   await player.play();
 
@@ -272,11 +284,57 @@ test('ScorePlayer aligns the alto sax loop waveform and releases after the writt
     { type: 'set', value: 0.0001, time: noteStart },
     { type: 'linear', value: 0.46, time: noteStart + 0.008 },
     { type: 'set', value: 0.46, time: noteEnd },
-    { type: 'linear', value: 0.0001, time: noteEnd + 0.1 },
+    { type: 'linear', value: 0.0001, time: noteEnd + 0.06 },
   ]);
-  assert.equal(source.stopTime, noteEnd + 0.1);
+  assert.equal(source.stopTime, noteEnd + 0.06);
   player.stop();
   await player.dispose();
+});
+
+test('alto sax gently reduces sustained level modulation while preserving attack and stereo balance', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  const originalDecode = FakeAudioContext.prototype.decodeAudioData;
+  const sampleRate = 12000;
+  const left = Float32Array.from({ length: sampleRate * 2 }, (_, index) => {
+    const time = index / sampleRate;
+    return Math.sin(2 * Math.PI * 240 * time) * (0.5 + 0.15 * Math.sin(2 * Math.PI * 5 * time));
+  });
+  const original = left.slice();
+  const right = Float32Array.from(left, (sample) => sample * 0.5);
+  let decodes = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  globalThis.fetch = async (url) => String(url).endsWith('.json')
+    ? { ok: true, async json() { return { C4: 'sax-c4' }; } }
+    : { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+  FakeAudioContext.prototype.decodeAudioData = async () => {
+    decodes += 1;
+    return { duration: 2, sampleRate, numberOfChannels: 2, getChannelData(index) { return [left, right][index]; } };
+  };
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+    FakeAudioContext.prototype.decodeAudioData = originalDecode;
+  });
+  const player = new ScorePlayer();
+  t.after(() => player.dispose());
+  await player.load({ ...score, notes: [score.notes[0]] });
+  await player.play();
+  const before = Math.log(levelSwing(original, sampleRate, 0.4, 1.7));
+  const after = Math.log(levelSwing(left, sampleRate, 0.4, 1.7));
+  assert.ok(after < before * 0.85, 'sustain modulation should be weaker');
+  assert.ok(after > before * 0.5, 'retain some natural movement');
+  assert.deepEqual(left.slice(0, sampleRate * 0.08), original.slice(0, sampleRate * 0.08));
+  for (let index = 0; index < left.length; index += 1) {
+    assert.ok(Number.isFinite(left[index]));
+    assert.equal(Math.sign(left[index]), Math.sign(original[index]), 'gain shaping must not change waveform phase');
+    assert.ok(Math.abs(right[index] - left[index] * 0.5) < 1e-6);
+  }
+  const onceProcessed = left.slice();
+  player.stop();
+  await player.play();
+  assert.equal(decodes, 1);
+  assert.deepEqual(left, onceProcessed, 'cached samples must not be processed repeatedly');
 });
 
 test('ScorePlayer reuses a nearby Salamander piano root sample with a natural sustain envelope', async (t) => {

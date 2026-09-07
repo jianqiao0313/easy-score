@@ -13,7 +13,7 @@ const SAMPLE_FALLBACK_SEMITONES = 12;
 const PIANO_ATTACK_SECONDS = 0.005;
 const PIANO_RELEASE_SECONDS = 0.3;
 const SAX_ATTACK_SECONDS = 0.008;
-const SAX_RELEASE_SECONDS = 0.1;
+const SAX_RELEASE_SECONDS = 0.06;
 const SAX_LOOP_START_RATIO = 0.32;
 const SAX_LOOP_SEARCH_START_RATIO = 0.68;
 const SAX_LOOP_SEARCH_END_RATIO = 0.82;
@@ -30,6 +30,48 @@ function midiToSampleName(midi) {
 function safeStop(node, when = 0) {
   try { node.stop(when); } catch { /* A source may already have ended. */ }
   try { node.disconnect(); } catch { /* Disconnect is best-effort. */ }
+}
+
+function softenSaxModulation(buffer) {
+  if (!Number.isFinite(buffer?.sampleRate) || buffer.sampleRate <= 0
+    || !Number.isFinite(buffer.numberOfChannels) || typeof buffer.getChannelData !== 'function') return buffer;
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
+  if (!channels.length) return buffer;
+  const frameCount = Math.min(...channels.map(({ length }) => length));
+  if (frameCount < Math.max(256, buffer.sampleRate * 0.25)) return buffer;
+  const blockSize = Math.max(1, Math.round(buffer.sampleRate * 0.02));
+  const energies = new Float64Array(Math.ceil(frameCount / blockSize));
+  for (let block = 0; block < energies.length; block += 1) {
+    const start = block * blockSize;
+    const end = Math.min(frameCount, start + blockSize);
+    let energy = 0;
+    for (const channel of channels) {
+      for (let frame = start; frame < end; frame += 1) energy += channel[frame] ** 2;
+    }
+    energies[block] = energy / ((end - start) * channels.length);
+  }
+  const gains = new Float64Array(energies.length);
+  for (let block = 0; block < energies.length; block += 1) {
+    const start = Math.max(0, block - 6);
+    const end = Math.min(energies.length, block + 7);
+    let baseline = 0;
+    for (let index = start; index < end; index += 1) baseline += energies[index];
+    baseline /= end - start;
+    // A 30% RMS correction retains natural movement; cap gain near silence.
+    gains[block] = energies[block] > 1e-10
+      ? clamp((baseline / energies[block]) ** 0.15, 0.8, 1.2) : 1;
+  }
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const position = Math.max(0, frame / blockSize - 0.5);
+    const block = Math.min(gains.length - 1, Math.floor(position));
+    const next = Math.min(gains.length - 1, block + 1);
+    const gain = gains[block] + (gains[next] - gains[block]) * (position - block);
+    // Keep the first 100ms intact, then introduce correction over 100ms.
+    const blend = clamp((frame / buffer.sampleRate - 0.1) / 0.1, 0, 1);
+    const correction = 1 + (gain - 1) * blend;
+    for (const channel of channels) channel[frame] *= correction;
+  }
+  return buffer;
 }
 
 function findSaxLoop(buffer) {
@@ -354,7 +396,8 @@ export class ScorePlayer {
       promises.set(midi, (async () => {
         const response = await fetch(sampleMap[midiToSampleName(midi)]);
         if (!response.ok) throw new Error(`无法读取 MIDI ${midi} 的采样`);
-        return this._context.decodeAudioData(await response.arrayBuffer());
+        const buffer = await this._context.decodeAudioData(await response.arrayBuffer());
+        return instrumentId === 'saxophone' ? softenSaxModulation(buffer) : buffer;
       })());
     }
     return promises.get(midi);

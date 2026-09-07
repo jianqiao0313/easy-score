@@ -53,6 +53,7 @@ RUN test "$TARGETARCH" = amd64 \
        poppler-utils \
        python3 \
        python3-pil \
+       shared-mime-info \
     && curl -fsSL --retry 3 -o /tmp/audiveris.deb \
        "https://github.com/Audiveris/audiveris/releases/download/${AUDIVERIS_VERSION}/Audiveris-${AUDIVERIS_VERSION}-ubuntu24.04-x86_64.deb" \
     && echo "${AUDIVERIS_SHA256}  /tmp/audiveris.deb" | sha256sum -c - \

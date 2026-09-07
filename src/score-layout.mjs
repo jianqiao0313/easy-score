@@ -5,6 +5,7 @@ function elementChildren(node, name) {
 }
 
 export function musicXmlWithSystemBreaks(source, measuresPerRow) {
+  if (measuresPerRow === 'auto') return source;
   const document = new DOMParser().parseFromString(source, 'application/xml');
   const parts = Array.from(document.getElementsByTagName('part'));
   for (const part of parts) {
@@ -22,6 +23,7 @@ export function musicXmlWithSystemBreaks(source, measuresPerRow) {
 }
 
 export function markMeasureRowEnds(sourceMeasures, measuresPerRow) {
+  if (measuresPerRow === 'auto') return;
   for (let index = 0; index < (sourceMeasures?.length || 0); index += 1) {
     sourceMeasures[index].HasEndLine = (index + 1) % measuresPerRow === 0 || index === sourceMeasures.length - 1;
   }

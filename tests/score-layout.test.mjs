@@ -21,6 +21,17 @@ test('layout copy replaces existing break directives at each row boundary', () =
   assert.equal(arranged.includes('new-system="no"'), false);
 });
 
+test('automatic layout passes through the original score without fixed row directives', () => {
+  const source = score.replace('<measure number="3">', '<measure number="3"><print new-system="yes"/>');
+  assert.equal(musicXmlWithSystemBreaks(source, 'auto'), source);
+});
+
+test('automatic layout preserves the original measure ending flags', () => {
+  const measures = [{ HasEndLine: true }, { HasEndLine: false }];
+  markMeasureRowEnds(measures, 'auto');
+  assert.deepEqual(measures, [{ HasEndLine: true }, { HasEndLine: false }]);
+});
+
 test('row endings are marked on the transient OSMD score model', () => {
   const measures = Array.from({ length: 7 }, (_, index) => ({
     HasEndLine: index === 1 || index === 6,

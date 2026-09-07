@@ -3,19 +3,20 @@ const MEASURES_PER_ROW_KEY = 'easy-score.measures-per-row';
 const INSTRUMENTS = new Set(['piano', 'saxophone']);
 
 function validMeasuresPerRow(value) {
+  if (value === 'auto') return true;
   const number = Number(value);
   return Number.isInteger(number) && number >= 1 && number <= 8;
 }
 
 export function loadPreferences(storage) {
   let instrumentId = 'saxophone';
-  let measuresPerRow = 4;
+  let measuresPerRow = 'auto';
   try {
     const target = storage === undefined ? globalThis.localStorage : storage;
     const storedInstrument = target?.getItem(INSTRUMENT_KEY);
     const storedMeasures = target?.getItem(MEASURES_PER_ROW_KEY);
     if (INSTRUMENTS.has(storedInstrument)) instrumentId = storedInstrument;
-    if (validMeasuresPerRow(storedMeasures)) measuresPerRow = Number(storedMeasures);
+    if (validMeasuresPerRow(storedMeasures)) measuresPerRow = storedMeasures === 'auto' ? 'auto' : Number(storedMeasures);
   } catch {
     // Storage can be unavailable in private or restricted browser contexts.
   }

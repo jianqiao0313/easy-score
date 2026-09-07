@@ -33,6 +33,7 @@ let retryAction = null;
 let currentTab = 'score';
 let cursorBeat = -1;
 let layoutRenderRequest = 0;
+let automaticLayoutWidth = 0;
 const preferences = loadPreferences();
 
 const player = new ScorePlayer({
@@ -76,6 +77,7 @@ function setTab(tab) {
   ui.pdfTab.setAttribute('aria-selected', String(!scoreSelected));
   updateCursorFollowing();
   if (score) setView('loaded');
+  if (scoreSelected) resizeAutomaticScore();
 }
 
 function updateCursorFollowing() {
@@ -249,15 +251,36 @@ function requiredScoreViewWidth(osmdInstance, measuresPerRow) {
   return Math.ceil((systemWidth + margins) * 10 * (osmdInstance.Zoom || 1)) + 56;
 }
 
+function automaticScoreWidth() {
+  const style = getComputedStyle(ui.dropZone);
+  return Math.max(1, Math.min(900, ui.dropZone.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
+}
+
+function resizeAutomaticScore() {
+  if (!osmd || !score || currentTab !== 'score' || ui.measuresPerRow.value !== 'auto' || ui.scoreView.hidden) return;
+  const width = automaticScoreWidth();
+  if (Math.abs(width - automaticLayoutWidth) < 1) return;
+  const { scrollTop, scrollLeft } = ui.dropZone;
+  osmd.setOptions({ followCursor: false });
+  ui.scoreView.style.width = `${width}px`;
+  automaticLayoutWidth = width;
+  osmd.render();
+  cursorBeat = -1;
+  updatePlayback(player.currentBeat);
+  updateCursorFollowing();
+  ui.dropZone.scrollTo(scrollLeft, scrollTop);
+}
+
 async function renderScore(source, request, layoutRequest = ++layoutRenderRequest) {
-  const measuresPerRow = Number(ui.measuresPerRow.value);
+  const measuresPerRow = ui.measuresPerRow.value === 'auto' ? 'auto' : Number(ui.measuresPerRow.value);
+  const automatic = measuresPerRow === 'auto';
   const nextOsmd = new OpenSheetMusicDisplay(ui.osmdContainer, {
     autoResize: false,
     backend: 'svg',
     drawTitle: true,
     drawingParameters: 'compacttight',
     followCursor: false,
-    newSystemFromXML: true,
+    newSystemFromXML: !automatic,
   });
   try {
     await nextOsmd.load(musicXmlWithSystemBreaks(source, measuresPerRow));
@@ -267,10 +290,14 @@ async function renderScore(source, request, layoutRequest = ++layoutRenderReques
     ui.osmdContainer.replaceChildren();
     ui.scoreView.style.minWidth = '';
     ui.scoreView.style.width = '';
+    if (automatic) {
+      automaticLayoutWidth = automaticScoreWidth();
+      ui.scoreView.style.width = `${automaticLayoutWidth}px`;
+    }
     ui.scoreView.classList.add('is-measuring');
-    configureEngraving(nextOsmd);
+    if (!automatic) configureEngraving(nextOsmd);
     nextOsmd.render();
-    const fixedWidth = measuredFixedWidth(nextOsmd);
+    const fixedWidth = automatic ? 0 : measuredFixedWidth(nextOsmd);
     if (fixedWidth) {
       nextOsmd.EngravingRules.FixedMeasureWidthFixedValue = fixedWidth;
       const scoreViewWidth = `${requiredScoreViewWidth(nextOsmd, measuresPerRow)}px`;
@@ -434,7 +461,7 @@ async function selectInstrument(button) {
 }
 
 async function changeMeasuresPerRow() {
-  const value = Number(ui.measuresPerRow.value);
+  const value = ui.measuresPerRow.value;
   saveMeasuresPerRow(undefined, value);
   if (!xmlText || !score) return;
   const request = ++layoutRenderRequest;
@@ -524,6 +551,20 @@ for (const eventName of ['dragleave', 'drop']) {
 }
 ui.dropZone.addEventListener('drop', (event) => uploadFile(event.dataTransfer.files[0]));
 ui.uploadButton.addEventListener('drop', (event) => uploadFile(event.dataTransfer.files[0]));
-window.addEventListener('beforeunload', () => { activeRequest++; player.dispose(); });
+let scoreResizeFrame = 0;
+const scoreResizeObserver = new ResizeObserver(() => {
+  if (scoreResizeFrame) return;
+  scoreResizeFrame = requestAnimationFrame(() => {
+    scoreResizeFrame = 0;
+    resizeAutomaticScore();
+  });
+});
+scoreResizeObserver.observe(ui.dropZone);
+window.addEventListener('beforeunload', () => {
+  activeRequest++;
+  scoreResizeObserver.disconnect();
+  cancelAnimationFrame(scoreResizeFrame);
+  player.dispose();
+});
 
 checkHealth();

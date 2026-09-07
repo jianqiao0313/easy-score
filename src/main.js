@@ -202,9 +202,9 @@ async function uploadFile(file) {
     ui.fileInput.value = '';
     return showError('请选择 PDF 格式的印刷乐谱。', () => ui.fileInput.click());
   }
-  if (file.size > 20 * 1024 * 1024) {
+  if (file.size > 50 * 1024 * 1024) {
     ui.fileInput.value = '';
-    return showError('文件超过 20 MB，请选择更小的 PDF。', () => ui.fileInput.click());
+    return showError('文件超过 50 MB，请选择更小的 PDF。', () => ui.fileInput.click());
   }
   retryAction = () => uploadFile(file);
   showJob({ status: 'queued', progress: 0, fileName: file.name, message: '正在安全地上传到识谱服务。' });

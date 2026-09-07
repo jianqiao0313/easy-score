@@ -83,8 +83,10 @@ test('health exposes the exact engine availability shape', async (t) => {
   });
 });
 
-test('upload validates content type, PDF magic bytes, and the 20 MB boundary', async (t) => {
+test('upload validates content type, PDF magic bytes, and the 50 MB boundary', async (t) => {
   const { base } = await fixture(t, fakeEngine());
+  const expectedMaximum = 50 * 1024 * 1024;
+  assert.equal(MAX_UPLOAD_BYTES, expectedMaximum);
 
   const wrongType = await fetch(`${base}/api/jobs`, { method: 'POST', body: TEST_PDF });
   assert.equal(wrongType.status, 415);
@@ -96,12 +98,31 @@ test('upload validates content type, PDF magic bytes, and the 20 MB boundary', a
   });
   assert.equal(wrongMagic.status, 400);
 
+  const aboveOldLimit = await fetch(`${base}/api/jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/pdf' },
+    body: Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(21 * 1024 * 1024 - 5)]),
+  });
+  assert.equal(aboveOldLimit.status, 202);
+
+  const atLimit = await fetch(`${base}/api/jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/pdf' },
+    body: Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(expectedMaximum - 5)]),
+  });
+  assert.equal(atLimit.status, 202);
+
   const tooLarge = await fetch(`${base}/api/jobs`, {
     method: 'POST',
     headers: { 'content-type': 'application/pdf' },
-    body: Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(MAX_UPLOAD_BYTES)]),
+    body: Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(expectedMaximum - 4)]),
   });
   assert.equal(tooLarge.status, 413);
+  assert.deepEqual(await tooLarge.json(), { error: 'PDF exceeds the 50 MB upload limit.' });
+
+  const acceptedJobs = await Promise.all([aboveOldLimit.json(), atLimit.json()]);
+  const completedJobs = await Promise.all(acceptedJobs.map(({ id }) => waitFor(base, id)));
+  assert.deepEqual(completedJobs.map(({ status }) => status), ['done', 'done']);
 });
 
 test('a raw PDF job persists, reports progress, and serves XML and the original bytes', async (t) => {

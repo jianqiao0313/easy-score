@@ -4,29 +4,26 @@
 
 网页版 PDF 五线谱识别与播放器。使用 Audiveris 识别印刷乐谱，以 OpenSheetMusicDisplay 显示五线谱，并通过 Web Audio 播放钢琴或中音萨克斯音色。
 
-当前稳定版本：[1.0.0](https://github.com/jianqiao0313/easy-score/releases/tag/v1.0.0)。Docker 标签 `1.0.0` 对应此版本，`latest` 跟随 `main` 的最新构建。
+当前稳定版本：[1.0.1](https://github.com/jianqiao0313/easy-score/releases/tag/v1.0.1)。Docker 标签 `1.0.1` 对应此版本，`latest` 跟随 `main` 的最新构建。
 
 ## 使用 Docker 启动
 
 镜像已发布到 [Docker Hub](https://hub.docker.com/r/jianqiao0313/easy-score)，包含完整识谱引擎和音色，无需额外安装 Java 或 Audiveris。
 
 ```sh
-docker run -d --name easy-score \
-  --restart unless-stopped \
-  --platform linux/amd64 \
-  -p 127.0.0.1:4173:4173 \
-  -v easy-score-data:/data \
-  jianqiao0313/easy-score:1.0.0
+docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.1
 ```
 
 打开 [http://localhost:4173](http://localhost:4173)。PDF 和识别结果保存在 `easy-score-data` 数据卷中；更新镜像时保留该卷即可。
 
-镜像支持 `linux/amd64`，Apple Silicon 需要通过 Docker 模拟运行。默认端口只允许本机访问；需要远程访问时，可通过反向代理提供服务。应用没有账户和登录功能，适合个人使用或可信网络部署。
+上面的单行命令适用于 x86_64 / amd64 主机。Apple Silicon 或其他 ARM 主机需在镜像名前加 `--platform linux/amd64`，并使用支持模拟运行的 Docker 环境。需要自动重启时，可再加 `--restart unless-stopped`。
 
-更新镜像时，将拉取和启动命令中的标签统一设置为目标版本（以下以 `1.0.0` 为例），并继续使用原数据卷：
+默认端口只允许本机访问；需要远程访问时，可通过反向代理提供服务。应用没有账户和登录功能，适合个人使用或可信网络部署。
+
+更新镜像时，将拉取和启动命令中的标签统一设置为目标版本（以下以 `1.0.1` 为例），并继续使用原数据卷：
 
 ```sh
-docker pull jianqiao0313/easy-score:1.0.0
+docker pull jianqiao0313/easy-score:1.0.1
 docker stop easy-score
 docker rm easy-score
 # 再次执行上面的 docker run 命令，继续使用原数据卷。
@@ -44,7 +41,7 @@ docker compose up -d --build
 
 ## 如何使用
 
-1. 上传印刷五线谱 PDF（最大 20 MB），等待识别完成。成功导入的乐谱会自动加入左侧“历史乐谱”，按导入时间倒序显示；点击即可重新打开、播放或查看原 PDF，无需重复识别。
+1. 上传印刷五线谱 PDF（最大 50 MB），等待识别完成。成功导入的乐谱会自动加入左侧“历史乐谱”，按导入时间倒序显示；点击即可重新打开、播放或查看原 PDF，无需重复识别。
 2. 选择中音萨克斯或钢琴。首次使用默认中音萨克斯，以后优先读取浏览器保存的选择。
 3. 设置每行显示的小节数。默认“自动”会根据可用宽度自然排版并随窗口调整；手动选择 1–8 小节会固定每行数量和音符区域宽度，行首谱号、调号和拍号另留空间，最后一行不会拉伸。设置保存在当前浏览器的 `localStorage` 中。
 4. 点击播放，可暂停、回到开头、跳到下一小节或拖动进度条，也可调整速度、音量和节拍器。

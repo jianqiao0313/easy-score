@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { createAudiverisEngine } from './engine.mjs';
 
-export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const SAFE_JOB_ID = /^[A-Za-z0-9_-]+$/;
 
 function json(response, status, value) {

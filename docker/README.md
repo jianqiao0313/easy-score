@@ -4,22 +4,19 @@ easy-score 是一款网页版 PDF 五线谱识别与播放器。镜像内包含 
 
 ## 快速启动
 
-当前稳定版本为 `1.0.0`，镜像平台为 `linux/amd64`：
+当前稳定版本为 `1.0.1`。x86_64 / amd64 主机复制下面一行即可启动：
 
 ```sh
-docker run -d --name easy-score \
-  --restart unless-stopped \
-  --platform linux/amd64 \
-  -p 127.0.0.1:4173:4173 \
-  -v easy-score-data:/data \
-  jianqiao0313/easy-score:1.0.0
+docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.1
 ```
 
 启动后打开 [http://localhost:4173](http://localhost:4173)。端口绑定到 `127.0.0.1`，只允许当前主机访问；如需提供远程访问，请在可信网络中配置反向代理。
 
+Apple Silicon 或其他 ARM 主机需在镜像名前加 `--platform linux/amd64`，并使用支持模拟运行的 Docker 环境。长期运行需要自动重启时，可再加 `--restart unless-stopped`。
+
 ## 功能
 
-- 上传印刷五线谱 PDF，通过 Audiveris 进行 OMR 识别。
+- 上传印刷五线谱 PDF（最大 50 MB），通过 Audiveris 进行 OMR 识别。
 - 在服务端保存原 PDF、识别结果和乐谱历史，刷新页面或更换浏览器后仍可重新打开。
 - 使用钢琴或中音萨克斯采样音色播放识别后的乐谱。
 - 支持播放、暂停、回到开头、跳到下一小节、拖动进度、速度、音量和节拍器控制。
@@ -33,7 +30,15 @@ OMR 可能出现错音、漏音或节奏偏差，建议始终对照原谱校验�
 
 容器将数据写入 `/data/jobs`。上面的命令使用名为 `easy-score-data` 的 Docker 数据卷；删除或重建容器不会删除该卷中的 PDF、识别结果和历史记录。
 
-升级时先拉取目标版本，停止并删除旧容器，然后使用相同的 `-v easy-score-data:/data` 参数和新版本镜像重新执行启动命令。不要删除 `easy-score-data` 数据卷。
+从旧版本升级到 `1.0.1`：
+
+```sh
+docker pull jianqiao0313/easy-score:1.0.1
+docker stop easy-score
+docker rm easy-score
+```
+
+再执行上面的单行启动命令，继续使用原 `easy-score-data` 数据卷，历史乐谱会保留。不要删除该数据卷。
 
 查看数据卷：
 
@@ -67,7 +72,7 @@ easy-score 自有代码与文档采用 [MIT License](https://github.com/jianqiao
 
 镜像包含 Audiveris 主项目的固定版本源码压缩包，但这不等同于已核实其全部捆绑依赖、Java 运行时及系统组件的对应源码完整性。具体来源、义务和待核实项见 [第三方许可证核查](https://github.com/jianqiao0313/easy-score/blob/main/THIRD_PARTY_NOTICES.md) 与 [npm 版本及许可证清单](https://github.com/jianqiao0313/easy-score/blob/main/docs/DEPENDENCY_LICENSES.md)。
 
-MIT 文件及第三方声明补充于 `1.0.0` 发布后的 `main` 构建。包含本次补充的镜像会在 `/usr/share/doc/easy-score/` 保存应用许可证、声明、Node 许可证及系统包版本清单，在 `/opt/tessdata/LICENSE` 保存 OCR 模型许可证；npm 许可证正文可通过应用的 `/third-party-licenses.txt` 下载。已发布的 `1.0.0` 镜像未重新打包。
+`1.0.1` 镜像在 `/usr/share/doc/easy-score/` 保存应用许可证、声明、Node 许可证及系统包版本清单，在 `/opt/tessdata/LICENSE` 保存 OCR 模型许可证；npm 许可证及音色、字形声明可通过应用的 `/third-party-licenses.txt` 和 `/asset-licenses.txt` 下载。
 
 ## 项目链接
 

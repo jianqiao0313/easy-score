@@ -59,6 +59,18 @@
               <p id="scoreComposer">导入印刷乐谱 PDF，识别后即可试听</p>
             </div>
             <div class="score-actions">
+              <label class="measures-per-row">每行
+                <select id="measuresPerRow" aria-label="每行小节数">
+                  <option value="1">1 小节</option>
+                  <option value="2">2 小节</option>
+                  <option value="3">3 小节</option>
+                  <option value="4">4 小节</option>
+                  <option value="5">5 小节</option>
+                  <option value="6">6 小节</option>
+                  <option value="7">7 小节</option>
+                  <option value="8">8 小节</option>
+                </select>
+              </label>
               <div class="view-tabs" role="tablist" aria-label="预览方式">
                 <button class="tab is-active" id="scoreTab" role="tab" aria-selected="true" aria-controls="scoreView" type="button">识别乐谱</button>
                 <button class="tab" id="pdfTab" role="tab" aria-selected="false" aria-controls="pdfView" type="button">原始 PDF</button>
@@ -125,11 +137,11 @@
           <section class="control-section">
             <div class="section-label"><span>演奏音色</span><span id="soundSource">等待乐谱</span></div>
             <div class="instrument-grid" id="instrumentGroup" role="radiogroup" aria-label="选择演奏音色">
-              <button class="instrument-card is-active" type="button" role="radio" aria-checked="true" data-instrument="piano">
+              <button class="instrument-card" type="button" role="radio" aria-checked="false" data-instrument="piano">
                 <span class="instrument-glyph" aria-hidden="true">♬</span><span><strong>钢琴</strong><small>柔和 · 清晰</small></span><i aria-hidden="true"></i>
               </button>
-              <button class="instrument-card" type="button" role="radio" aria-checked="false" data-instrument="saxophone">
-                <span class="instrument-glyph sax" aria-hidden="true">𝄞</span><span><strong>萨克斯</strong><small>温暖 · 连贯</small></span><i aria-hidden="true"></i>
+              <button class="instrument-card is-active" type="button" role="radio" aria-checked="true" data-instrument="saxophone">
+                <span class="instrument-glyph sax" aria-hidden="true">𝄞</span><span><strong>中音萨克斯</strong><small>温暖 · 连贯</small></span><i aria-hidden="true"></i>
               </button>
             </div>
           </section>

@@ -53,6 +53,15 @@ class FakeAudioContext {
   }
 }
 
+function decodedBuffer(samples, duration = 2) {
+  const channel = Float32Array.from(samples);
+  return {
+    duration,
+    numberOfChannels: 1,
+    getChannelData() { return channel; },
+  };
+}
+
 const score = {
   tempo: 120,
   timeSignature: { beats: 4, beatType: 4 },
@@ -81,7 +90,7 @@ test('ScorePlayer initializes audio lazily, loads only used local samples, and c
     globalThis.fetch = originalFetch;
   });
 
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'piano' });
   await player.load(score);
   assert.equal(FakeAudioContext.instances.length, 0);
 
@@ -130,6 +139,150 @@ test('ScorePlayer exposes distinct instruments and falls back visibly to synthes
   await player.dispose();
 });
 
+test('ScorePlayer defaults to alto saxophone without creating an AudioContext and accepts a stored initial instrument', () => {
+  FakeAudioContext.instances.length = 0;
+
+  const defaultPlayer = new ScorePlayer();
+  const storedPreferencePlayer = new ScorePlayer({ instrumentId: 'piano' });
+
+  assert.equal(defaultPlayer.instrumentId, 'saxophone');
+  assert.equal(storedPreferencePlayer.instrumentId, 'piano');
+  assert.equal(FakeAudioContext.instances.length, 0);
+  assert.throws(() => new ScorePlayer({ instrumentId: 'accordion' }), /未知音色/);
+});
+
+test('ScorePlayer pitch-shifts the nearest audible alto sax sample when the requested sample is silent', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  FakeAudioContext.instances.length = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  const fetchedSamples = [];
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value.endsWith('saxophone.json')) {
+      return {
+        ok: true,
+        async json() {
+          return { D6: 'sax-d6', Db6: 'sax-db6', C6: 'sax-c6' };
+        },
+      };
+    }
+    fetchedSamples.push(value);
+    return {
+      ok: true,
+      async arrayBuffer() { return Uint8Array.of(value === 'sax-c6' ? 1 : 0).buffer; },
+    };
+  };
+  const originalDecode = FakeAudioContext.prototype.decodeAudioData;
+  FakeAudioContext.prototype.decodeAudioData = async function decodeAudioData(bytes) {
+    return decodedBuffer([new Uint8Array(bytes)[0] ? 0.2 : 0.00002]);
+  };
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+    FakeAudioContext.prototype.decodeAudioData = originalDecode;
+  });
+
+  const player = new ScorePlayer();
+  await player.load({ ...score, notes: [{ ...score.notes[0], midi: 86 }] });
+  await player.play();
+
+  const source = FakeAudioContext.instances[0].bufferSources[0];
+  assert.deepEqual(fetchedSamples, ['sax-d6', 'sax-db6', 'sax-c6']);
+  assert.ok(Math.abs(source.playbackRate.value - 2 ** (2 / 12)) < 1e-10);
+  player.stop();
+  await player.dispose();
+});
+
+test('ScorePlayer reports the beat currently rendered by the audio output device', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  FakeAudioContext.instances.length = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('saxophone.json')) {
+      return { ok: true, async json() { return { C4: 'sax-c', E4: 'sax-e' }; } };
+    }
+    return { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+  };
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+  });
+
+  const player = new ScorePlayer();
+  await player.load(score);
+  await player.play();
+  const context = FakeAudioContext.instances[0];
+  context.currentTime = 10.5;
+  context.getOutputTimestamp = () => ({ contextTime: 10.25, performanceTime: 1000 });
+
+  assert.equal(player.currentBeat, 0.5);
+  player.stop();
+  await player.dispose();
+});
+
+test('ScorePlayer does not finish before the output device renders the score end', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  FakeAudioContext.instances.length = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('saxophone.json')) {
+      return { ok: true, async json() { return { C4: 'sax-c' }; } };
+    }
+    return { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+  };
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+  });
+
+  const player = new ScorePlayer();
+  await player.load({ ...score, totalBeats: 1, notes: [score.notes[0]] });
+  await player.play();
+  const context = FakeAudioContext.instances[0];
+  context.currentTime = 10.6;
+  context.getOutputTimestamp = () => ({ contextTime: 10.4, performanceTime: 1000 });
+
+  player._scheduleWindow();
+  assert.equal(player.isPlaying, true);
+  assert.ok(Math.abs(player.currentBeat - 0.8) < 1e-10);
+
+  context.getOutputTimestamp = () => ({ contextTime: 10.5, performanceTime: 1100 });
+  player._emitPosition();
+  assert.equal(player.isPlaying, false);
+  await player.dispose();
+});
+
+test('ScorePlayer position does not regress behind a new seek anchor while output catches up', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  FakeAudioContext.instances.length = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('saxophone.json')) {
+      return { ok: true, async json() { return { C4: 'sax-c', E4: 'sax-e' }; } };
+    }
+    return { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+  };
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+  });
+
+  const player = new ScorePlayer();
+  await player.load(score);
+  await player.play();
+  const context = FakeAudioContext.instances[0];
+  player.seek(2);
+  context.getOutputTimestamp = () => ({ contextTime: context.currentTime - 0.1, performanceTime: 1000 });
+
+  assert.equal(player.currentBeat, 2);
+  player.stop();
+  await player.dispose();
+});
+
 test('ScorePlayer metronome accents measure starts and follows a changed beat subdivision', async (t) => {
   const originalAudioContext = globalThis.AudioContext;
   const originalFetch = globalThis.fetch;
@@ -146,7 +299,7 @@ test('ScorePlayer metronome accents measure starts and follows a changed beat su
     globalThis.fetch = originalFetch;
   });
 
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'piano' });
   await player.load({
     ...score,
     tempo: 400,
@@ -183,7 +336,7 @@ test('ScorePlayer does not start stale playback after stop is called during samp
     globalThis.fetch = originalFetch;
   });
 
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'piano' });
   await player.load(score);
   const playing = player.play();
   await Promise.resolve();
@@ -214,7 +367,7 @@ test('ScorePlayer seek and tempo changes cancel old sources and preserve transpo
     globalThis.fetch = originalFetch;
   });
 
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'piano' });
   await player.load(score);
   await player.play();
   const context = FakeAudioContext.instances[0];
@@ -255,7 +408,7 @@ test('pause during an instrument switch cancels the pending restart', async (t) 
     globalThis.fetch = originalFetch;
   });
 
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'piano' });
   await player.load(score);
   await player.play();
   const switching = player.setInstrument('saxophone');
@@ -290,7 +443,7 @@ test('seek during an instrument switch becomes the restart position', async (t) 
     globalThis.fetch = originalFetch;
   });
 
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'piano' });
   await player.load(score);
   await player.play();
   const switching = player.setInstrument('saxophone');
@@ -332,7 +485,7 @@ test('seeking to the end leaves no timers and replay immediately reports beat ze
   });
 
   const positions = [];
-  const player = new ScorePlayer({ onPosition: (beat) => positions.push(beat) });
+  const player = new ScorePlayer({ instrumentId: 'piano', onPosition: (beat) => positions.push(beat) });
   await player.load(score);
   await player.play();
   assert.equal(activeIntervals.size, 2);

@@ -1,6 +1,9 @@
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { parseMusicXML } from './musicxml.mjs';
 import { ScorePlayer } from './audio.mjs';
+import { syncCursorToBeat } from './cursor.mjs';
+import { loadPreferences, saveInstrument, saveMeasuresPerRow } from './preferences.mjs';
+import { markMeasureRowEnds, musicXmlWithSystemBreaks } from './score-layout.mjs';
 import './style.css';
 
 const $ = (selector) => document.querySelector(selector);
@@ -11,6 +14,7 @@ const ui = {
   progressBar: $('#progressBar'), jobStatusLabel: $('#jobStatusLabel'), jobStatusTitle: $('#jobStatusTitle'), jobStatusMessage: $('#jobStatusMessage'), scoreView: $('#scoreView'),
   pdfView: $('#pdfView'), pdfFrame: $('#pdfFrame'), osmdContainer: $('#osmdContainer'), scoreTab: $('#scoreTab'), pdfTab: $('#pdfTab'),
   exportButton: $('#exportButton'), scoreOrigin: $('#scoreOrigin'), scoreTitle: $('#scoreTitle'), scoreComposer: $('#scoreComposer'), scoreMeta: $('#scoreMeta'),
+  measuresPerRow: $('#measuresPerRow'),
   timeSignature: $('#timeSignature'), keySignature: $('#keySignature'), measureCount: $('#measureCount'), warningCount: $('#warningCount'), soundSource: $('#soundSource'),
   warningDetails: $('#warningDetails'), warningList: $('#warningList'),
   instrumentGroup: $('#instrumentGroup'), tempoInput: $('#tempoInput'), tempoRange: $('#tempoRange'), tempoDown: $('#tempoDown'), tempoUp: $('#tempoUp'), tempoMark: $('#tempoMark'),
@@ -28,8 +32,11 @@ let activeRequest = 0;
 let retryAction = null;
 let currentTab = 'score';
 let cursorBeat = -1;
+let layoutRenderRequest = 0;
+const preferences = loadPreferences();
 
 const player = new ScorePlayer({
+  instrumentId: preferences.instrumentId,
   onPosition: (beat) => updatePlayback(beat),
   onEnded: () => {
     setPlaying(false);
@@ -40,6 +47,9 @@ const player = new ScorePlayer({
     if (message && soundMode === 'synthesized') setPracticeTip('音源提示', message, '!');
   },
 });
+
+ui.measuresPerRow.value = String(preferences.measuresPerRow);
+setInstrumentSelection(preferences.instrumentId);
 
 function formatTime(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -64,7 +74,13 @@ function setTab(tab) {
   ui.pdfTab.classList.toggle('is-active', !scoreSelected);
   ui.scoreTab.setAttribute('aria-selected', String(scoreSelected));
   ui.pdfTab.setAttribute('aria-selected', String(!scoreSelected));
+  updateCursorFollowing();
   if (score) setView('loaded');
+}
+
+function updateCursorFollowing() {
+  if (!osmd) return;
+  osmd.setOptions({ followCursor: Boolean(player?.isPlaying && currentTab === 'score') });
 }
 
 function showError(message, action) {
@@ -200,24 +216,68 @@ async function loadCompletedJob(job, request) {
   setTab('score');
 }
 
-async function renderScore(source, request) {
+function configureEngraving(osmdInstance) {
+  const rules = osmdInstance.EngravingRules;
+  rules.FixedMeasureWidth = true;
+  rules.FixedMeasureWidthUseForPickupMeasures = true;
+  rules.StretchLastSystemLine = false;
+  rules.LastSystemMaxScalingFactor = 1;
+  rules.NewPartAndSystemAfterFinalBarline = true;
+  rules.ShowRhythmAgainAfterPartEndOrFinalBarline = false;
+}
+
+function measuredFixedWidth(osmdInstance) {
+  const widths = (osmdInstance.GraphicSheet?.MeasureList || []).flat()
+    .map((measure) => measure?.minimumStaffEntriesWidth)
+    .filter((width) => Number.isFinite(width) && width > 0);
+  return widths.length ? Math.max(...widths) : 0;
+}
+
+function requiredScoreViewWidth(osmdInstance, measuresPerRow) {
+  const rules = osmdInstance.EngravingRules;
+  const systems = (osmdInstance.GraphicSheet?.MusicPages || []).flatMap((page) => page.MusicSystems || []);
+  const measureWidths = (osmdInstance.GraphicSheet?.MeasureList || []).map((staffMeasures) => Math.max(0, ...staffMeasures
+    .filter(Boolean)
+    .map((measure) => measure.beginInstructionsWidth + measure.minimumStaffEntriesWidth + measure.endInstructionsWidth)));
+  const rowWidths = [];
+  for (let index = 0; index < measureWidths.length; index += measuresPerRow) {
+    rowWidths.push(measureWidths.slice(index, index + measuresPerRow).reduce((sum, width) => sum + width, 0));
+  }
+  const labelWidth = Math.max(0, ...systems.map((system) => system.MaxLabelLength || 0)) + rules.SystemLabelsRightMargin;
+  const systemWidth = Math.max(0, ...rowWidths) + labelWidth;
+  const margins = rules.PageLeftMargin + rules.PageRightMargin + rules.SystemLeftMargin + rules.SystemRightMargin;
+  return Math.ceil((systemWidth + margins) * 10 * (osmdInstance.Zoom || 1)) + 56;
+}
+
+async function renderScore(source, request, layoutRequest = ++layoutRenderRequest) {
+  const measuresPerRow = Number(ui.measuresPerRow.value);
   const nextOsmd = new OpenSheetMusicDisplay(ui.osmdContainer, {
     autoResize: false,
     backend: 'svg',
     drawTitle: true,
     drawingParameters: 'compacttight',
-    followCursor: true,
+    followCursor: false,
+    newSystemFromXML: true,
   });
   try {
-    await nextOsmd.load(source);
-    if (request !== activeRequest) return;
-    currentTab = 'score';
-    setTab('score');
-    setView('loaded');
+    await nextOsmd.load(musicXmlWithSystemBreaks(source, measuresPerRow));
+    if (request !== activeRequest || layoutRequest !== layoutRenderRequest) return;
+    markMeasureRowEnds(nextOsmd.Sheet?.SourceMeasures, measuresPerRow);
     releaseOsmd();
     ui.osmdContainer.replaceChildren();
-    nextOsmd.setOptions({ autoResize: true });
+    ui.scoreView.style.minWidth = '';
+    ui.scoreView.style.width = '';
+    ui.scoreView.classList.add('is-measuring');
+    configureEngraving(nextOsmd);
     nextOsmd.render();
+    const fixedWidth = measuredFixedWidth(nextOsmd);
+    if (fixedWidth) {
+      nextOsmd.EngravingRules.FixedMeasureWidthFixedValue = fixedWidth;
+      const scoreViewWidth = `${requiredScoreViewWidth(nextOsmd, measuresPerRow)}px`;
+      ui.scoreView.style.minWidth = scoreViewWidth;
+      ui.scoreView.style.width = scoreViewWidth;
+      nextOsmd.render();
+    }
     osmd = nextOsmd;
     if (nextOsmd.cursor) {
       nextOsmd.cursor.show();
@@ -225,6 +285,8 @@ async function renderScore(source, request) {
     }
   } catch (error) {
     throw new Error(`乐谱排版失败：${error.message}`);
+  } finally {
+    ui.scoreView.classList.remove('is-measuring');
   }
 }
 
@@ -288,6 +350,7 @@ function setPlaying(playing) {
   ui.playButton.classList.toggle('is-playing', playing);
   ui.playButton.querySelector('span').textContent = playing ? 'Ⅱ' : '▶';
   ui.playButton.setAttribute('aria-label', playing ? '暂停' : '播放');
+  updateCursorFollowing();
 }
 
 function updatePlayback(beat) {
@@ -302,30 +365,22 @@ function updatePlayback(beat) {
   syncCursor(currentBeat);
 }
 
-function cursorTimestampBeats() {
-  const iterator = osmd?.cursor?.iterator;
-  const timestamp = iterator?.currentTimeStamp || iterator?.CurrentTimeStamp;
-  const real = timestamp?.realValue ?? timestamp?.RealValue;
-  return Number.isFinite(real) ? real * 4 : null;
-}
-
 function syncCursor(beat) {
   const cursor = osmd?.cursor;
-  if (!cursor || Math.abs(beat - cursorBeat) < 0.18) return;
+  if (!cursor) return;
   try {
-    if (beat < cursorBeat || cursorBeat < 0) cursor.reset();
-    let guard = 0;
-    let timestamp = cursorTimestampBeats();
-    while (timestamp !== null && timestamp < beat && guard++ < 10000 && !cursor.iterator?.endReached) {
-      cursor.next();
-      const next = cursorTimestampBeats();
-      if (next === timestamp) break;
-      timestamp = next;
-    }
-    cursor.show();
+    syncCursorToBeat(cursor, beat, { reset: beat < cursorBeat || cursorBeat < 0 });
     cursorBeat = beat;
   } catch {
     cursor.hide();
+  }
+}
+
+function setInstrumentSelection(instrumentId) {
+  for (const item of ui.instrumentGroup.querySelectorAll('[data-instrument]')) {
+    const selected = item.dataset.instrument === instrumentId;
+    item.classList.toggle('is-active', selected);
+    item.setAttribute('aria-checked', String(selected));
   }
 }
 
@@ -367,17 +422,37 @@ async function selectInstrument(button) {
   updateSoundSourceLabel(true);
   try {
     await player.setInstrument(id);
-    buttons.forEach((item) => {
-      const selected = item === button;
-      item.classList.toggle('is-active', selected);
-      item.setAttribute('aria-checked', String(selected));
-    });
+    setInstrumentSelection(id);
+    saveInstrument(undefined, id);
     updateSoundSourceLabel();
   } catch (error) {
     ui.soundSource.textContent = `音色加载失败`;
     setPracticeTip('音色未切换', error.message || '请稍后重试。', '!');
   } finally {
     buttons.forEach((item) => { item.disabled = false; });
+  }
+}
+
+async function changeMeasuresPerRow() {
+  const value = Number(ui.measuresPerRow.value);
+  saveMeasuresPerRow(undefined, value);
+  if (!xmlText || !score) return;
+  const request = ++layoutRenderRequest;
+  const tab = currentTab;
+  const scrollTop = ui.dropZone.scrollTop;
+  const scrollLeft = ui.dropZone.scrollLeft;
+  ui.measuresPerRow.disabled = true;
+  try {
+    await renderScore(xmlText, activeRequest, request);
+    if (request !== layoutRenderRequest) return;
+    cursorBeat = -1;
+    updatePlayback(player.currentBeat);
+    setTab(tab);
+    ui.dropZone.scrollTo(scrollLeft, scrollTop);
+  } catch (error) {
+    setPracticeTip('排版未更新', error.message || '请稍后重试。', '!');
+  } finally {
+    if (request === layoutRenderRequest) ui.measuresPerRow.disabled = false;
   }
 }
 
@@ -402,6 +477,7 @@ ui.retryButton.addEventListener('click', () => retryAction?.());
 ui.scoreTab.addEventListener('click', () => setTab('score'));
 ui.pdfTab.addEventListener('click', () => setTab('pdf'));
 ui.exportButton.addEventListener('click', exportXml);
+ui.measuresPerRow.addEventListener('change', changeMeasuresPerRow);
 ui.instrumentGroup.addEventListener('click', (event) => { const button = event.target.closest('[data-instrument]'); if (button) selectInstrument(button); });
 ui.tempoRange.addEventListener('input', () => setTempo(ui.tempoRange.value));
 ui.tempoInput.addEventListener('change', () => setTempo(ui.tempoInput.value));

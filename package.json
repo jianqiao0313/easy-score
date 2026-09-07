@@ -10,9 +10,11 @@
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "opensheetmusicdisplay": "^1.9.2",
     "@xmldom/xmldom": "^0.8.11",
-    "fflate": "^0.8.2"
+    "fflate": "^0.8.2",
+    "opensheetmusicdisplay": "2.1.2"
   },
-  "devDependencies": { "vite": "^7.1.5" }
+  "devDependencies": {
+    "vite": "^7.1.5"
+  }
 }

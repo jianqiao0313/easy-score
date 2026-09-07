@@ -1,6 +1,6 @@
 export const INSTRUMENTS = Object.freeze([
   Object.freeze({ id: 'piano', name: '钢琴', description: '本地采样钢琴（加载失败时使用合成音色）' }),
-  Object.freeze({ id: 'saxophone', name: '萨克斯', description: '本地采样萨克斯（加载失败时使用合成音色）' }),
+  Object.freeze({ id: 'saxophone', name: '中音萨克斯', description: '本地采样中音萨克斯（加载失败时使用合成音色）' }),
 ]);
 
 const INSTRUMENT_IDS = new Set(INSTRUMENTS.map(({ id }) => id));
@@ -8,6 +8,8 @@ const SAMPLE_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb'
 const LOOKAHEAD_SECONDS = 0.15;
 const SCHEDULER_INTERVAL_MS = 25;
 const POSITION_INTERVAL_MS = 33;
+const SILENCE_PEAK_THRESHOLD = 0.0005;
+const SAMPLE_FALLBACK_SEMITONES = 12;
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -24,7 +26,8 @@ function safeStop(node, when = 0) {
 }
 
 export class ScorePlayer {
-  constructor({ onPosition = () => {}, onEnded = () => {}, onStatus = () => {} } = {}) {
+  constructor({ instrumentId = 'saxophone', onPosition = () => {}, onEnded = () => {}, onStatus = () => {} } = {}) {
+    if (!INSTRUMENT_IDS.has(instrumentId)) throw new RangeError(`未知音色：${instrumentId}`);
     this._onPosition = onPosition;
     this._onEnded = onEnded;
     this._onStatus = onStatus;
@@ -32,12 +35,13 @@ export class ScorePlayer {
     this._context = null;
     this._masterGain = null;
     this._tempo = 120;
-    this._instrumentId = 'piano';
+    this._instrumentId = instrumentId;
     this._metronome = false;
     this._volume = 0.8;
     this._soundMode = 'uninitialized';
     this._sampleMaps = new Map();
     this._sampleBuffers = new Map();
+    this._sampleDecodePromises = new Map();
     this._sampleFailures = new Set();
     this._sampleFailureMessages = new Map();
     this._activeSources = new Set();
@@ -56,7 +60,7 @@ export class ScorePlayer {
 
   get currentBeat() {
     if (!this._playing || !this._context) return this._storedBeat;
-    return clamp(this._anchorBeat + (this._context.currentTime - this._anchorTime) / this._secondsPerBeat(), 0, this._score?.totalBeats || 0);
+    return this._beatAtContextTime(this._audibleContextTime());
   }
 
   get isPlaying() { return this._playIntent; }
@@ -122,6 +126,10 @@ export class ScorePlayer {
   seek(beat) {
     const target = clamp(Number(beat) || 0, 0, this._score?.totalBeats || 0);
     this._storedBeat = target;
+    if (this._playing && target >= this._score.totalBeats) {
+      this._finish();
+      return;
+    }
     if (this._playing) this._restartScheduling(target);
     this._onPosition(target);
   }
@@ -178,6 +186,7 @@ export class ScorePlayer {
     this._context = null;
     this._masterGain = null;
     this._sampleBuffers.clear();
+    this._sampleDecodePromises.clear();
   }
 
   async _ensureAudio() {
@@ -211,12 +220,9 @@ export class ScorePlayer {
       const neededMidi = [...new Set((this._score?.notes || []).map(({ midi }) => Math.round(midi)))];
       await Promise.all(neededMidi.map(async (midi) => {
         if (buffers.has(midi)) return;
-        const dataUrl = sampleMap[midiToSampleName(midi)];
-        if (!dataUrl) throw new Error(`缺少 MIDI ${midi} 的采样`);
-        const response = await fetch(dataUrl);
-        if (!response.ok) throw new Error(`无法读取 MIDI ${midi} 的采样`);
-        const encodedAudio = await response.arrayBuffer();
-        buffers.set(midi, await this._context.decodeAudioData(encodedAudio));
+        const sample = await this._findAudibleSample(instrumentId, sampleMap, midi);
+        if (!sample) throw new Error(`MIDI ${midi} 附近没有可听采样`);
+        buffers.set(midi, sample);
       }));
       return 'sample';
     } catch (error) {
@@ -238,6 +244,56 @@ export class ScorePlayer {
   }
 
   _secondsPerBeat() { return 60 / this._tempo; }
+
+  _beatAtContextTime(contextTime) {
+    return clamp(this._anchorBeat + (contextTime - this._anchorTime) / this._secondsPerBeat(), this._anchorBeat, this._score?.totalBeats || 0);
+  }
+
+  _audibleContextTime() {
+    if (typeof this._context.getOutputTimestamp !== 'function') return this._context.currentTime;
+    const contextTime = this._context.getOutputTimestamp()?.contextTime;
+    return Number.isFinite(contextTime) ? contextTime : this._context.currentTime;
+  }
+
+  async _findAudibleSample(instrumentId, sampleMap, targetMidi) {
+    for (let distance = 0; distance <= SAMPLE_FALLBACK_SEMITONES; distance += 1) {
+      const candidates = distance === 0 ? [targetMidi] : [targetMidi - distance, targetMidi + distance];
+      for (const sourceMidi of candidates) {
+        if (!sampleMap[midiToSampleName(sourceMidi)]) continue;
+        const buffer = await this._decodeSample(instrumentId, sampleMap, sourceMidi);
+        if (this._isAudibleBuffer(buffer)) return { buffer, sourceMidi };
+      }
+    }
+    return null;
+  }
+
+  async _decodeSample(instrumentId, sampleMap, midi) {
+    let promises = this._sampleDecodePromises.get(instrumentId);
+    if (!promises) {
+      promises = new Map();
+      this._sampleDecodePromises.set(instrumentId, promises);
+    }
+    if (!promises.has(midi)) {
+      promises.set(midi, (async () => {
+        const response = await fetch(sampleMap[midiToSampleName(midi)]);
+        if (!response.ok) throw new Error(`无法读取 MIDI ${midi} 的采样`);
+        return this._context.decodeAudioData(await response.arrayBuffer());
+      })());
+    }
+    return promises.get(midi);
+  }
+
+  _isAudibleBuffer(buffer) {
+    if (!Number.isFinite(buffer?.numberOfChannels) || typeof buffer.getChannelData !== 'function') return true;
+    for (let channelIndex = 0; channelIndex < buffer.numberOfChannels; channelIndex += 1) {
+      const channel = buffer.getChannelData(channelIndex);
+      const stride = Math.max(1, Math.floor(channel.length / 8192));
+      for (let index = 0; index < channel.length; index += stride) {
+        if (Math.abs(channel[index]) >= SILENCE_PEAK_THRESHOLD) return true;
+      }
+    }
+    return false;
+  }
 
   _restartScheduling(beat) {
     this._clearTimersAndSources();
@@ -282,11 +338,8 @@ export class ScorePlayer {
 
   _scheduleWindow() {
     if (!this._playing) return;
-    const nowBeat = this.currentBeat;
-    if (nowBeat >= this._score.totalBeats) {
-      this._finish();
-      return;
-    }
+    const nowBeat = this._beatAtContextTime(this._context.currentTime);
+    if (nowBeat >= this._score.totalBeats) return;
     const horizonBeat = nowBeat + LOOKAHEAD_SECONDS / this._secondsPerBeat();
     while (this._nextNoteIndex < this._score.notes.length) {
       const note = this._score.notes[this._nextNoteIndex];
@@ -304,8 +357,8 @@ export class ScorePlayer {
     const when = Math.max(this._context.currentTime + 0.005, this._anchorTime + (audibleStartBeat - this._anchorBeat) * secondsPerBeat);
     const duration = Math.max(0.02, (note.startBeat + note.durationBeats - audibleStartBeat) * secondsPerBeat);
     const offset = Math.max(0, (audibleStartBeat - note.startBeat) * secondsPerBeat);
-    const buffer = this._sampleBuffers.get(this._instrumentId)?.get(Math.round(note.midi));
-    if (this._soundMode === 'sample' && buffer) this._scheduleSample(note.midi, buffer, when, duration, offset);
+    const sample = this._sampleBuffers.get(this._instrumentId)?.get(Math.round(note.midi));
+    if (this._soundMode === 'sample' && sample) this._scheduleSample(note.midi, sample, when, duration, offset);
     else this._scheduleSynth(note.midi, when, duration);
   }
 
@@ -314,10 +367,13 @@ export class ScorePlayer {
     source.onended = () => this._activeSources.delete(source);
   }
 
-  _scheduleSample(midi, buffer, when, duration, offset) {
+  _scheduleSample(midi, sample, when, duration, offset) {
+    const { buffer, sourceMidi } = sample;
     const source = this._context.createBufferSource();
     const envelope = this._context.createGain();
     source.buffer = buffer;
+    const playbackRate = 2 ** ((midi - sourceMidi) / 12);
+    source.playbackRate.setValueAtTime(playbackRate, when);
     source.connect(envelope);
     envelope.connect(this._masterGain);
     envelope.gain.setValueAtTime(0.0001, when);
@@ -332,7 +388,7 @@ export class ScorePlayer {
       envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration + 0.12);
     }
     this._trackSource(source);
-    source.start(when, Math.min(offset, Math.max(0, buffer.duration - 0.02)));
+    source.start(when, Math.min(offset * playbackRate, Math.max(0, buffer.duration - 0.02)));
     source.stop(when + duration + 0.14);
   }
 

@@ -4,11 +4,23 @@ import test from 'node:test';
 import { INSTRUMENTS, ScorePlayer } from '../src/audio.mjs';
 
 class FakeParam {
-  constructor(value = 0) { this.value = value; }
-  setValueAtTime(value) { this.value = value; }
-  linearRampToValueAtTime(value) { this.value = value; }
-  exponentialRampToValueAtTime(value) { this.value = value; }
-  cancelScheduledValues() {}
+  constructor(value = 0) {
+    this.value = value;
+    this.events = [];
+  }
+  setValueAtTime(value, time) {
+    this.value = value;
+    this.events.push({ type: 'set', value, time });
+  }
+  linearRampToValueAtTime(value, time) {
+    this.value = value;
+    this.events.push({ type: 'linear', value, time });
+  }
+  exponentialRampToValueAtTime(value, time) {
+    this.value = value;
+    this.events.push({ type: 'exponential', value, time });
+  }
+  cancelScheduledValues(time) { this.events.push({ type: 'cancel', time }); }
 }
 
 class FakeNode {
@@ -20,8 +32,12 @@ class FakeNode {
     this.playbackRate = new FakeParam(1);
     this.stopped = false;
     this.stopCalls = [];
+    this.connections = [];
   }
-  connect() { return this; }
+  connect(node) {
+    this.connections.push(node);
+    return this;
+  }
   disconnect() {}
   start(when = 0, offset = 0) { this.started = { when, offset }; }
   stop(when = 0) { this.stopped = true; this.stopTime = when; this.stopCalls.push(when); }
@@ -183,14 +199,72 @@ test('ScorePlayer pitch-shifts the nearest audible alto sax sample when the requ
     FakeAudioContext.prototype.decodeAudioData = originalDecode;
   });
 
-  const player = new ScorePlayer();
+  const statuses = [];
+  const player = new ScorePlayer({ onStatus: (status) => statuses.push(status) });
   await player.load({ ...score, notes: [{ ...score.notes[0], midi: 86 }] });
   await player.play();
 
   const source = FakeAudioContext.instances[0].bufferSources[0];
   assert.deepEqual(fetchedSamples, ['sax-d6', 'sax-db6', 'sax-c6']);
   assert.ok(Math.abs(source.playbackRate.value - 2 ** (2 / 12)) < 1e-10);
+  assert.match(statuses.at(-1).message, /FluidR3_GM 中音萨克斯/);
   player.stop();
+  await player.dispose();
+});
+
+test('ScorePlayer reuses a nearby Salamander piano root sample with a natural sustain envelope', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  const originalDecode = FakeAudioContext.prototype.decodeAudioData;
+  FakeAudioContext.instances.length = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  const fetchedSamples = [];
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value.endsWith('piano.json')) {
+      return { ok: true, async json() { return { C4: 'piano-c4', Eb4: 'piano-eb4' }; } };
+    }
+    fetchedSamples.push(value);
+    return { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+  };
+  FakeAudioContext.prototype.decodeAudioData = async () => decodedBuffer([0.2], 16);
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+    FakeAudioContext.prototype.decodeAudioData = originalDecode;
+  });
+
+  const statuses = [];
+  const player = new ScorePlayer({ instrumentId: 'piano', onStatus: (status) => statuses.push(status) });
+  await player.load({
+    ...score,
+    totalBeats: 2,
+    notes: [
+      { ...score.notes[0], id: 'piano-a', midi: 61, durationBeats: 2 },
+      { ...score.notes[0], id: 'piano-b', midi: 61, durationBeats: 2 },
+    ],
+  });
+  await player.play();
+
+  const sources = FakeAudioContext.instances[0].bufferSources;
+  assert.deepEqual(fetchedSamples, ['piano-c4']);
+  assert.equal(sources.length, 2);
+  assert.equal(sources[0].buffer, sources[1].buffer);
+  assert.ok(Math.abs(sources[0].playbackRate.value - 2 ** (1 / 12)) < 1e-10);
+  assert.match(statuses.at(-1).message, /Salamander Grand Piano/);
+
+  const source = sources[0];
+  const noteStart = source.started.when;
+  const noteEnd = noteStart + 1;
+  assert.deepEqual(source.connections[0].gain.events, [
+    { type: 'set', value: 0.0001, time: noteStart },
+    { type: 'linear', value: 0.72, time: noteStart + 0.005 },
+    { type: 'set', value: 0.72, time: noteEnd },
+    { type: 'exponential', value: 0.0001, time: noteEnd + 0.3 },
+  ]);
+  assert.equal(source.stopTime, noteEnd + 0.3);
+  player.stop();
+  assert.ok(sources.every((scheduledSource) => scheduledSource.stopCalls.includes(0)));
   await player.dispose();
 });
 
@@ -252,6 +326,55 @@ test('ScorePlayer does not finish before the output device renders the score end
   context.getOutputTimestamp = () => ({ contextTime: 10.5, performanceTime: 1100 });
   player._emitPosition();
   assert.equal(player.isPlaying, false);
+  await player.dispose();
+});
+
+test('natural score completion preserves the piano release tail without leaving transport timers', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  FakeAudioContext.instances.length = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('piano.json')) {
+      return { ok: true, async json() { return { C4: 'piano-c4' }; } };
+    }
+    return { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+  };
+  const activeIntervals = new Set();
+  globalThis.setInterval = () => {
+    const handle = {};
+    activeIntervals.add(handle);
+    return handle;
+  };
+  globalThis.clearInterval = (handle) => activeIntervals.delete(handle);
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  });
+
+  let endedCount = 0;
+  const player = new ScorePlayer({ instrumentId: 'piano', onEnded: () => { endedCount += 1; } });
+  await player.load({ ...score, totalBeats: 1, notes: [score.notes[0]] });
+  await player.play();
+  const context = FakeAudioContext.instances[0];
+  const source = context.bufferSources[0];
+  const scheduledStops = [...source.stopCalls];
+  assert.equal(activeIntervals.size, 2);
+
+  context.getOutputTimestamp = () => ({ contextTime: 10.5, performanceTime: 1000 });
+  player._emitPosition();
+  assert.equal(player.isPlaying, false);
+  assert.equal(endedCount, 1);
+  assert.equal(activeIntervals.size, 0);
+  assert.deepEqual(source.stopCalls, scheduledStops);
+
+  player.seek(0.25);
+  assert.ok(source.stopCalls.includes(0));
+  assert.equal(player.currentBeat, 0.25);
   await player.dispose();
 });
 

@@ -1,5 +1,5 @@
 export const INSTRUMENTS = Object.freeze([
-  Object.freeze({ id: 'piano', name: '钢琴', description: '本地采样钢琴（加载失败时使用合成音色）' }),
+  Object.freeze({ id: 'piano', name: '钢琴', description: 'Salamander 大三角钢琴（加载失败时使用合成音色）' }),
   Object.freeze({ id: 'saxophone', name: '中音萨克斯', description: '本地采样中音萨克斯（加载失败时使用合成音色）' }),
 ]);
 
@@ -10,6 +10,8 @@ const SCHEDULER_INTERVAL_MS = 25;
 const POSITION_INTERVAL_MS = 33;
 const SILENCE_PEAK_THRESHOLD = 0.0005;
 const SAMPLE_FALLBACK_SEMITONES = 12;
+const PIANO_ATTACK_SECONDS = 0.005;
+const PIANO_RELEASE_SECONDS = 0.3;
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -131,6 +133,7 @@ export class ScorePlayer {
       return;
     }
     if (this._playing) this._restartScheduling(target);
+    else if (this._activeSources.size) this._clearTimersAndSources();
     this._onPosition(target);
   }
 
@@ -253,9 +256,12 @@ export class ScorePlayer {
   }
 
   _soundModeMessage(instrumentId, soundMode) {
-    return soundMode === 'sample'
-      ? '正在使用本地 FluidR3_GM 采样。'
-      : this._sampleFailureMessages.get(instrumentId) || '本地采样不可用，已切换到合成音色。';
+    if (soundMode === 'sample') {
+      return instrumentId === 'piano'
+        ? '正在使用 Tone.js Salamander Grand Piano 本地采样。'
+        : '正在使用 FluidR3_GM 中音萨克斯本地采样。';
+    }
+    return this._sampleFailureMessages.get(instrumentId) || '本地采样不可用，已切换到合成音色。';
   }
 
   _setSoundMode(soundMode, message) {
@@ -332,26 +338,31 @@ export class ScorePlayer {
   }
 
   _clearTimersAndSources() {
+    this._clearTimers();
+    for (const source of this._activeSources) safeStop(source);
+    this._activeSources.clear();
+  }
+
+  _clearTimers() {
     if (this._schedulerTimer) clearInterval(this._schedulerTimer);
     if (this._positionTimer) clearInterval(this._positionTimer);
     this._schedulerTimer = null;
     this._positionTimer = null;
-    for (const source of this._activeSources) safeStop(source);
-    this._activeSources.clear();
   }
 
   _emitPosition() {
     if (!this._playing) return;
     const beat = this.currentBeat;
     this._onPosition(beat);
-    if (beat >= this._score.totalBeats) this._finish();
+    if (beat >= this._score.totalBeats) this._finish(true);
   }
 
-  _finish() {
+  _finish(preserveRelease = false) {
     this._playIntent = false;
     this._playing = false;
     this._storedBeat = this._score.totalBeats;
-    this._clearTimersAndSources();
+    if (preserveRelease) this._clearTimers();
+    else this._clearTimersAndSources();
     this._onPosition(this._storedBeat);
     this._onEnded();
   }
@@ -397,19 +408,24 @@ export class ScorePlayer {
     source.connect(envelope);
     envelope.connect(this._masterGain);
     envelope.gain.setValueAtTime(0.0001, when);
-    envelope.gain.linearRampToValueAtTime(this._instrumentId === 'piano' ? 0.72 : 0.5, when + 0.015);
-    if (this._instrumentId === 'saxophone' && buffer.duration > 0.4) {
+    if (this._instrumentId === 'piano') {
+      envelope.gain.linearRampToValueAtTime(0.72, when + PIANO_ATTACK_SECONDS);
+      envelope.gain.setValueAtTime(0.72, when + duration);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration + PIANO_RELEASE_SECONDS);
+    } else if (buffer.duration > 0.4) {
+      envelope.gain.linearRampToValueAtTime(0.5, when + 0.015);
       source.loop = true;
       source.loopStart = buffer.duration * 0.25;
       source.loopEnd = buffer.duration * 0.72;
       envelope.gain.setValueAtTime(0.5, when + Math.max(0.02, duration - 0.08));
       envelope.gain.linearRampToValueAtTime(0.0001, when + duration);
     } else {
+      envelope.gain.linearRampToValueAtTime(0.5, when + 0.015);
       envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration + 0.12);
     }
     this._trackSource(source);
     source.start(when, Math.min(offset * playbackRate, Math.max(0, buffer.duration - 0.02)));
-    source.stop(when + duration + 0.14);
+    source.stop(when + duration + (this._instrumentId === 'piano' ? PIANO_RELEASE_SECONDS : 0.14));
   }
 
   _scheduleSynth(midi, when, duration) {

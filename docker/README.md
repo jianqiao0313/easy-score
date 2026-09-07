@@ -68,7 +68,8 @@ easy-score 自有代码与文档采用 [MIT License](https://github.com/jianqiao
 - OpenSheetMusicDisplay 2.1.2：BSD-3-Clause，分发时保留版权、许可和免责声明，不得暗示上游背书。
 - Audiveris 5.11.0：AGPL-3.0；Poppler：GPL。再分发相关二进制时需履行对应源码等义务；修改 AGPL 程序并向网络用户提供服务时，还需关注其源码提供要求。
 - JSZip 3.10.1：本项目选择双许可中的 MIT；Pako 1.0.11：MIT 与 Zlib 均需遵守。
-- 钢琴、中音萨克斯音色：预渲染发行层为 CC BY 3.0 US，原始 Fluid SoundFont 为 MIT；保留署名、许可链接和 JSON 转换说明。记谱字体的独立许可见下方核查文档。
+- Salamander 三角钢琴：Alexander Holm，CC BY 3.0；中音萨克斯：FluidR3 原始 MIT、MIDI.js 预渲染发行层 CC BY 3.0 US。保留各自的署名、许可与处理说明。
+- 思源黑体 2.005R：SIL OFL 1.1；官方可变 WOFF2 本地分发，保留许可原文，未修改字体文件。记谱字形的独立许可见下方核查文档。
 
 镜像包含 Audiveris 主项目的固定版本源码压缩包，但这不等同于已核实其全部捆绑依赖、Java 运行时及系统组件的对应源码完整性。具体来源、义务和待核实项见 [第三方许可证核查](https://github.com/jianqiao0313/easy-score/blob/main/THIRD_PARTY_NOTICES.md) 与 [npm 版本及许可证清单](https://github.com/jianqiao0313/easy-score/blob/main/docs/DEPENDENCY_LICENSES.md)。
 

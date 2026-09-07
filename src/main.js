@@ -20,7 +20,7 @@ const ui = {
   timeSignature: $('#timeSignature'), keySignature: $('#keySignature'), measureCount: $('#measureCount'), warningCount: $('#warningCount'), soundSource: $('#soundSource'),
   warningDetails: $('#warningDetails'), warningList: $('#warningList'),
   instrumentGroup: $('#instrumentGroup'), tempoInput: $('#tempoInput'), tempoRange: $('#tempoRange'), tempoDown: $('#tempoDown'), tempoUp: $('#tempoUp'), tempoMark: $('#tempoMark'),
-  metronomeToggle: $('#metronomeToggle'), volumeRange: $('#volumeRange'), volumeValue: $('#volumeValue'), practiceTip: $('#practiceTip'), playButton: $('#playButton'),
+  metronomeToggle: $('#metronomeToggle'), volumeRange: $('#volumeRange'), volumeValue: $('#volumeValue'), volumeDown: $('#volumeDown'), volumeUp: $('#volumeUp'), practiceTip: $('#practiceTip'), playButton: $('#playButton'),
   previousButton: $('#previousButton'), forwardButton: $('#forwardButton'), seekRange: $('#seekRange'), currentTime: $('#currentTime'), totalTime: $('#totalTime'),
   currentMeasure: $('#currentMeasure'), totalMeasures: $('#totalMeasures'), nowPlayingTitle: $('#nowPlayingTitle'), nowPlayingDetail: $('#nowPlayingDetail'),
 };
@@ -41,6 +41,10 @@ let layoutRenderRequest = 0;
 let automaticLayoutWidth = 0;
 let historyRequest = 0;
 const preferences = loadPreferences();
+const scoreFontReady = Promise.all([
+  document.fonts.load('400 16px "Source Han Sans CN VF"'),
+  document.fonts.load('600 16px "Source Han Sans CN VF"'),
+]).catch(() => {}); // A font download failure should not prevent playing a score.
 
 const player = new ScorePlayer({
   instrumentId: preferences.instrumentId,
@@ -57,6 +61,7 @@ const player = new ScorePlayer({
 
 ui.measuresPerRow.value = String(preferences.measuresPerRow);
 setInstrumentSelection(preferences.instrumentId);
+setVolume(ui.volumeRange.value);
 
 function formatTime(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -328,8 +333,10 @@ async function renderScore(source, request, layoutRequest = ++layoutRenderReques
     drawingParameters: 'compacttight',
     followCursor: false,
     newSystemFromXML: !automatic,
+    defaultFontFamily: 'Source Han Sans CN VF',
   });
   try {
+    await scoreFontReady;
     await nextOsmd.load(musicXmlWithSystemBreaks(source, measuresPerRow));
     if (request !== activeRequest || layoutRequest !== layoutRenderRequest) return;
     markMeasureRowEnds(nextOsmd.Sheet?.SourceMeasures, measuresPerRow);
@@ -470,6 +477,13 @@ function setTempo(value) {
   if (score) updatePlayback(player.currentBeat);
 }
 
+function setVolume(value) {
+  const volume = Math.max(0, Math.min(100, Number(value) || 0));
+  ui.volumeRange.value = String(volume);
+  ui.volumeValue.textContent = `${volume}%`;
+  player.setVolume(volume / 100);
+}
+
 function updateSoundSourceLabel(loading = false, reportedMode = '') {
   if (loading) return void (ui.soundSource.textContent = '正在加载音色…');
   const source = reportedMode || player.soundMode || player.soundSource || player.audioSource || player.instrumentSource || player.sourceType;
@@ -559,7 +573,9 @@ ui.tempoRange.addEventListener('input', () => setTempo(ui.tempoRange.value));
 ui.tempoInput.addEventListener('change', () => setTempo(ui.tempoInput.value));
 ui.tempoDown.addEventListener('click', () => setTempo(Number(ui.tempoInput.value) - 2));
 ui.tempoUp.addEventListener('click', () => setTempo(Number(ui.tempoInput.value) + 2));
-ui.volumeRange.addEventListener('input', () => { ui.volumeValue.textContent = `${ui.volumeRange.value}%`; player.setVolume(Number(ui.volumeRange.value) / 100); });
+ui.volumeRange.addEventListener('input', () => setVolume(ui.volumeRange.value));
+ui.volumeDown.addEventListener('click', () => setVolume(Number(ui.volumeRange.value) - 10));
+ui.volumeUp.addEventListener('click', () => setVolume(Number(ui.volumeRange.value) + 10));
 ui.metronomeToggle.addEventListener('click', () => {
   const enabled = ui.metronomeToggle.getAttribute('aria-checked') !== 'true';
   ui.metronomeToggle.setAttribute('aria-checked', String(enabled));

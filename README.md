@@ -42,7 +42,7 @@ docker compose up -d --build
 ## 如何使用
 
 1. 上传印刷五线谱 PDF（最大 50 MB），等待识别完成。成功导入的乐谱会自动加入左侧“历史乐谱”，按导入时间倒序显示；点击即可重新打开、播放或查看原 PDF，无需重复识别。
-2. 选择中音萨克斯或钢琴。首次使用默认中音萨克斯，以后优先读取浏览器保存的选择。
+2. 选择中音萨克斯或 Salamander 三角钢琴（明亮、清晰的 Yamaha C5 采样）。首次使用默认中音萨克斯，以后优先读取浏览器保存的选择。
 3. 设置每行显示的小节数。默认“自动”会根据可用宽度自然排版并随窗口调整；手动选择 1–8 小节会固定每行数量和音符区域宽度，行首谱号、调号和拍号另留空间，最后一行不会拉伸。设置保存在当前浏览器的 `localStorage` 中。
 4. 点击播放，可暂停、跳到上一小节或下一小节、拖动进度条，也可调整速度、音量和节拍器。
 5. 切换到原始 PDF 对照，或导出 MusicXML 到制谱软件继续校对。
@@ -94,6 +94,7 @@ node scripts/verify-live.mjs /path/to/score.pdf
 
 - `server/`：上传接口、识别任务队列、PDF 预处理和 Audiveris 调用。
 - `src/`：MusicXML 时间轴解析、音频播放、五线谱排版及界面交互。
+- `public/fonts/`：随应用分发的思源黑体可变字体与 OFL 许可。
 - `public/soundfonts/`：钢琴与中音萨克斯采样。
 - `tests/`：解析、播放、偏好设置和服务测试。
 - `Dockerfile`、`compose.yaml`、`docker/`：镜像构建、运行配置和容器识谱验证。
@@ -104,7 +105,7 @@ node scripts/verify-live.mjs /path/to/score.pdf
 
 easy-score 自有代码与文档采用 [MIT License](LICENSE)，允许使用、修改、分发和商业使用，分发时需保留版权声明与许可证。此授权不替代第三方代码、音色、字体及用户上传乐谱各自的许可证，也不表示整个 Docker 镜像都是 MIT。
 
-第三方依赖并非全部为 MIT：OpenSheetMusicDisplay 2.1.2 为 BSD-3-Clause；Audiveris 5.11.0 为 AGPL-3.0；镜像中的 Poppler 使用 GPL；音色预渲染发行层使用 CC BY 3.0 US，原始 Fluid SoundFont 使用 MIT，需保留相应署名和许可。JSZip 3.10.1 提供 MIT / GPL 双许可，本项目选择 MIT；Pako 1.0.11 需同时遵守 MIT 与 Zlib。
+第三方依赖并非全部为 MIT：OpenSheetMusicDisplay 2.1.2 为 BSD-3-Clause；Audiveris 5.11.0 为 AGPL-3.0；镜像中的 Poppler 使用 GPL。Salamander 钢琴采样采用 CC BY 3.0 Unported；中音萨克斯的预渲染发行层使用 CC BY 3.0 US，原始 Fluid SoundFont 使用 MIT；思源黑体使用 SIL OFL 1.1，均需保留相应署名和许可。JSZip 3.10.1 提供 MIT / GPL 双许可，本项目选择 MIT；Pako 1.0.11 需同时遵守 MIT 与 Zlib。
 
 具体版本、商业使用与再分发要求、尚需核实的镜像源码范围，见 [第三方许可证核查](THIRD_PARTY_NOTICES.md)；所有 npm 锁定依赖见 [版本与许可证清单](docs/DEPENDENCY_LICENSES.md)。应用随附 [npm 许可证正文](public/third-party-licenses.txt) 与 [音色及字形声明](public/asset-licenses.txt)，构建后可通过 `/third-party-licenses.txt` 与 `/asset-licenses.txt` 获取。
 

@@ -1,7 +1,6 @@
 easy-score — Instrument sample notices
 
-The piano.json and saxophone.json files contain acoustic grand piano and
-alto saxophone MP3 samples from the FluidR3_GM MIDI.js Soundfonts distribution.
+The saxophone.json file contains alto saxophone MP3 samples from the FluidR3_GM MIDI.js Soundfonts distribution.
 
 Original Fluid (R3) SoundFont: Frank Wen.
 Original license source: https://github.com/pianobooster/fluid-soundfont/blob/master/COPYING
@@ -14,7 +13,6 @@ https://creativecommons.org/licenses/by/3.0/us/
 https://creativecommons.org/licenses/by/3.0/us/legalcode.en
 
 Sources:
-https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/acoustic_grand_piano-mp3.js
 https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/alto_sax-mp3.js
 
 Changes by easy-score: removed the JavaScript variable wrapper and serialized
@@ -60,3 +58,28 @@ The original license_url and license_description fields are empty.
 This reproduces the metadata supplied with those two files; it is not a new
 license grant, and is not a claim about all fonts in the dependency bundle.
 The VexFlow code MIT notice is included in /third-party-licenses.txt.
+
+
+Source Han Sans CN VF — Local web font
+
+Copyright 2014-2025 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+Source Han Sans 2.005R, Simplified Chinese regional variable WOFF2.
+License: SIL Open Font License 1.1; complete original text: /fonts/LICENSE.txt
+Source and checksums: /fonts/SOURCE.md
+Upstream: https://github.com/adobe-fonts/source-han-sans/tree/6c709ca72d3d7c46ab42ebecc1a26e7d69595a37
+The official font file is redistributed unmodified.
+
+
+Salamander Grand Piano V3 — Piano samples
+
+Original sample library: Alexander Holm, Yamaha C5 grand piano.
+Distribution: Tonejs/audio, commit 869b6f8d9cddb47d966238c012041480b1ce517a.
+https://github.com/Tonejs/audio/tree/869b6f8d9cddb47d966238c012041480b1ce517a/salamander
+License: Creative Commons Attribution 3.0 Unported (CC BY 3.0).
+https://creativecommons.org/licenses/by/3.0/
+Complete license text: /soundfonts/piano/LICENSE-CC-BY-3.0.txt
+Source and checksums: /soundfonts/piano/SOURCE.md and /soundfonts/piano/SHA256SUMS
+The 30 upstream MP3 files are redistributed unmodified.
+Changes by easy-score: a JSON mapping points root notes to local files; the player
+pitch-shifts neighboring roots and applies a short attack and note-off release.
+These samples are not relicensed by easy-score's MIT declaration.

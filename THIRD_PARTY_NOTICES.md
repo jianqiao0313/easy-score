@@ -34,17 +34,28 @@
 
 ## 钢琴与中音萨克斯音色
 
-`public/soundfonts/piano.json` 和 `saxophone.json` 来自 MIDI.js Soundfonts 的 FluidR3_GM acoustic grand piano 与 alto saxophone MP3。音色没有应用包式的语义版本号，需按资源来源和内容摘要核对，不能用 npm 许可证扫描代替。
+### Salamander 三角钢琴
+
+钢琴使用 Alexander Holm 的 **Salamander Grand Piano V3 / Yamaha C5**，来自 [Tonejs/audio 的固定提交](https://github.com/Tonejs/audio/tree/869b6f8d9cddb47d966238c012041480b1ce517a/salamander)。本项目随应用提供该发行版的 30 个原始立体声 MP3 根采样，按需加载，并通过最近根音的播放速率覆盖中间音高。它是原始多力度音源的精简发行版，不包含完整力度层。
+
+许可为 **Creative Commons Attribution 3.0 Unported（CC BY 3.0）**；允许商业使用、再分发和改编，需署名、附许可链接、说明改动，不得暗示原作者背书。本项目未修改 MP3 字节，只创建本地路径映射；播放器保留采样自然衰减，并在松键后释放尾音。完整许可、固定来源和每个文件的 SHA-256 见 [钢琴来源记录](public/soundfonts/piano/SOURCE.md)、[CC BY 3.0 正文](public/soundfonts/piano/LICENSE-CC-BY-3.0.txt) 和 [SHA256SUMS](public/soundfonts/piano/SHA256SUMS)，它们随镜像一起分发。
+
+### FluidR3 中音萨克斯
+
+`public/soundfonts/saxophone.json` 来自 MIDI.js Soundfonts 的 FluidR3_GM alto saxophone MP3。此音源未在本次更换。
 
 - 原始 Fluid (R3) SoundFont：Frank Wen，原始 README / COPYING 声明为 MIT。保留其版权和完整许可，来源见 [Fluid SoundFont COPYING](https://github.com/pianobooster/fluid-soundfont/blob/master/COPYING)。
-- 使用的预渲染样本发行层：Benjamin Gleitzman 及 MIDI.js Soundfonts 贡献者，其 [README](https://github.com/gleitz/midi-js-soundfonts/blob/gh-pages/README.md) 将 FluidR3_GM 样本列为 [CC BY 3.0 US](https://creativecommons.org/licenses/by/3.0/us/legalcode.en)。本项目同时保留该署名、许可链接与修改说明，未把此发行层改称为 MIT。
-- 两层均允许商业使用；分发这些音色时仍需保留适用的版权、署名与许可证，不得暗示作者认可衍生产品。CC BY 3.0 US 还要求说明衍生修改，不能添加限制接收者行使许可权利的法律或技术措施。
-- 本项目的修改：去掉 JavaScript 变量赋值包装，将样本映射序列化为 JSON；音频字节未作修改。
+- 预渲染发行层：Benjamin Gleitzman 及 MIDI.js Soundfonts 贡献者，其 [README](https://github.com/gleitz/midi-js-soundfonts/blob/gh-pages/README.md) 将 FluidR3_GM 样本列为 [CC BY 3.0 US](https://creativecommons.org/licenses/by/3.0/us/legalcode.en)。本项目保留署名、许可链接及修改说明，不把此发行层改称为 MIT。
+- 本项目移除了原 JavaScript 变量包装并将样本映射保存为 JSON，音频字节未修改。原始 MIT 全文与发行层声明见 [音色许可证](public/asset-licenses.txt)。
+- [样本来源](https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/alto_sax-mp3.js)；当前 `saxophone.json` SHA-256：`aab5e8b4a0d7a3b6a5c28f8639414bb760dcee47eb421a77728f6482509aa90e`。原始导入提交未记录。
 
-样本来源：[钢琴](https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/acoustic_grand_piano-mp3.js)、[中音萨克斯](https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/alto_sax-mp3.js)。完整原始 MIT 文本及样本署名见 [音色许可证](public/asset-licenses.txt)，该文件也随前端发布。源文件原始导入提交未记录；当前本地分发文件的 SHA-256：
+这些采样不因 easy-score 自有代码采用 MIT 而改变许可。旧版本中的 FluidR3 钢琴已从当前发行资源移除，其历史版本继续适用原有声明。
 
-- `piano.json`：`3ecf74e2f674056f1a1b82830b228b5d788e9036afc7eb290adc1fffeea7dca1`。
-- `saxophone.json`：`aab5e8b4a0d7a3b6a5c28f8639414bb760dcee47eb421a77728f6482509aa90e`。
+## 思源黑体网页字体
+
+页面及识别后乐谱的文字使用 Adobe [Source Han Sans 2.005R](https://github.com/adobe-fonts/source-han-sans/releases/tag/2.005R) 的官方简体中文区域版可变 WOFF2（`Source Han Sans CN VF`，字重 250–900）。字体以 [SIL Open Font License 1.1](public/fonts/LICENSE.txt) 分发，允许在网页和 Docker 中打包使用；保留完整版权与许可，不将字体本身单独售卖。`Source` 为保留字体名，修改或重命名时需遵循 OFL 的相关条件。
+
+本项目直接提供上游预制 WOFF2，未转换、裁剪或改名。文件路径、固定上游提交和 SHA-256 见 [字体来源记录](public/fonts/SOURCE.md)。其许可原文通过应用的 `/fonts/LICENSE.txt` 提供。乐谱音符等专业记谱字形继续由 OSMD / VexFlow 绘制，不以正文字体替代。
 
 ## 记谱字形与上游打包缺口
 

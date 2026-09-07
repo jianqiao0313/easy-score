@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#f4f0e7" />
     <meta name="description" content="easy-score 是一款 PDF 乐谱识别与练习播放器。" />
     <link rel="icon" href="/easy-score.svg" type="image/svg+xml" />
+    <link rel="preload" href="/fonts/SourceHanSansCN-VF.otf.woff2" as="font" type="font/woff2" crossorigin />
     <title>easy-score · PDF 乐谱播放器</title>
   </head>
   <body>
@@ -145,10 +146,10 @@
             <div class="section-label"><span>演奏音色</span><span id="soundSource">等待乐谱</span></div>
             <div class="instrument-grid" id="instrumentGroup" role="radiogroup" aria-label="选择演奏音色">
               <button class="instrument-card" type="button" role="radio" aria-checked="false" data-instrument="piano">
-                <span class="instrument-glyph" data-icon="piano" aria-hidden="true"></span><span><strong>钢琴</strong><small>柔和 · 清晰</small></span><i aria-hidden="true"></i>
+                <span class="instrument-glyph" data-icon="piano" aria-hidden="true"></span><span><strong>钢琴</strong><small>明亮 · 清晰</small></span><i aria-hidden="true"></i>
               </button>
               <button class="instrument-card is-active" type="button" role="radio" aria-checked="true" data-instrument="saxophone">
-                <span class="instrument-glyph" data-icon="music" aria-hidden="true"></span><span><strong>中音萨克斯</strong><small>温暖 · 连贯</small></span><i aria-hidden="true"></i>
+                <span class="instrument-glyph" data-icon="saxophone" aria-hidden="true"></span><span><strong>中音萨克斯</strong><small>温暖 · 连贯</small></span><i aria-hidden="true"></i>
               </button>
             </div>
           </section>
@@ -169,7 +170,7 @@
 
           <section class="control-section volume-section">
             <div class="section-label"><span>音量</span><span id="volumeValue">72%</span></div>
-            <div class="volume-row"><span data-icon="volume-low" aria-hidden="true"></span><input class="range" id="volumeRange" type="range" min="0" max="100" value="72" aria-label="音量" /><span data-icon="volume-high" aria-hidden="true"></span></div>
+            <div class="volume-row"><button id="volumeDown" type="button" aria-label="音量减 10" title="音量减 10"><span data-icon="volume-low" aria-hidden="true"></span></button><input class="range" id="volumeRange" type="range" min="0" max="100" value="72" aria-label="音量" /><button id="volumeUp" type="button" aria-label="音量加 10" title="音量加 10"><span data-icon="volume-high" aria-hidden="true"></span></button></div>
           </section>
 
           <div class="practice-tip" id="practiceTip"><span data-icon="info" aria-hidden="true"></span><p><strong>练习提示</strong>载入乐谱后，可从任意位置开始播放。</p></div>

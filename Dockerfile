@@ -85,6 +85,7 @@ COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY server ./server
+COPY src/musicxml.mjs ./src/musicxml.mjs
 COPY LICENSE /usr/share/doc/easy-score/LICENSE
 COPY THIRD_PARTY_NOTICES.md /usr/share/doc/easy-score/THIRD_PARTY_NOTICES.md
 COPY docker/AUDIVERIS.md /usr/share/doc/easy-score/AUDIVERIS.md

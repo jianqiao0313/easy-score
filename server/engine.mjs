@@ -2,7 +2,7 @@ import { access, appendFile, mkdtemp, readFile, readdir, rm, stat } from 'node:f
 import { constants } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { unzipSync, strFromU8 } from 'fflate';
+import { musicXmlFromMxl, validateMusicXml } from './imports.mjs';
 
 export const DEFAULT_ENGINE_PATH = path.resolve(
   '.local/omr/Audiveris.app/Contents/MacOS/Audiveris',
@@ -126,23 +126,6 @@ async function preparePdfInput({ inputPath, outputDir, timeoutMs, onProgress }) 
   }
 }
 
-function musicXmlFromMxl(buffer) {
-  const archive = unzipSync(new Uint8Array(buffer));
-  const container = archive['META-INF/container.xml'];
-  let rootPath;
-
-  if (container) {
-    const containerXml = strFromU8(container);
-    rootPath = containerXml.match(/full-path=["']([^"']+)["']/i)?.[1];
-  }
-
-  const fallback = Object.keys(archive).find((name) =>
-    /\.(?:musicxml|xml)$/i.test(name) && !name.startsWith('META-INF/'));
-  const score = archive[rootPath ?? fallback];
-  if (!score) throw new Error('Audiveris produced an MXL archive without a MusicXML score.');
-  return strFromU8(score);
-}
-
 function progressForLog(line, current) {
   const upper = line.toUpperCase();
   const stages = [
@@ -188,11 +171,13 @@ export function createAudiverisEngine({
       }
     },
 
-    async convert({ inputPath, outputDir, onProgress = () => {} }) {
+    async convert({ inputPath, outputDir, sourceType = 'pdf', onProgress = () => {} }) {
       const health = await this.health();
       if (!health.available) throw new Error(health.message);
 
-      const prepared = await preparePdfInput({ inputPath, outputDir, timeoutMs, onProgress });
+      const prepared = sourceType === 'pdf'
+        ? await preparePdfInput({ inputPath, outputDir, timeoutMs, onProgress })
+        : { recognitionInput: inputPath, warnings: [], cleanup: async () => {} };
       const args = ['-batch', '-transcribe', '-export', '-output', outputDir, '--', prepared.recognitionInput];
 
       let progress = 12;
@@ -225,16 +210,29 @@ export function createAudiverisEngine({
 
       const mxlFiles = await findFiles(outputDir, '.mxl');
       if (mxlFiles.length === 0) {
-        throw new Error('Audiveris completed without producing an MXL file.');
+        const failure = new Error('Audiveris completed without producing an MXL file.');
+        failure.publicMessage = sourceType === 'image'
+          ? 'Audiveris 无法从这张图片生成乐谱，请确认图片完整且包含清晰的五线谱。'
+          : 'Audiveris 未能从 PDF 生成乐谱，请确认文件完整且包含可识别的五线谱。';
+        throw failure;
       }
       const newest = (await Promise.all(mxlFiles.map(async (file) => ({
         file,
         stat: await stat(file),
       })))).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)[0].file;
       const mxl = await readFile(newest);
-      return { xml: musicXmlFromMxl(mxl), mxlPath: newest, warnings: prepared.warnings };
+      try {
+        const xml = validateMusicXml(Buffer.from(musicXmlFromMxl(mxl)));
+        return { xml, mxlPath: newest, warnings: prepared.warnings };
+      } catch (cause) {
+        const failure = new Error(`Audiveris produced invalid MusicXML: ${cause.message}`);
+        failure.publicMessage = sourceType === 'image'
+          ? 'Audiveris 已处理图片，但没有生成包含可播放音符的有效乐谱。请尝试更清晰、完整的五线谱图片。'
+          : 'Audiveris 已处理 PDF，但没有生成包含可播放音符的有效乐谱。请确认文件包含清晰、完整的五线谱。';
+        throw failure;
+      }
     },
   };
 }
 
-export { musicXmlFromMxl };
+export { musicXmlFromMxl } from './imports.mjs';

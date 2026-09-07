@@ -2,28 +2,28 @@
 
 <img src="public/easy-score.svg" alt="easy-score" width="120" />
 
-网页版 PDF 五线谱识别与播放器。使用 Audiveris 识别印刷乐谱，以 OpenSheetMusicDisplay 显示五线谱，并通过 Web Audio 播放钢琴或中音萨克斯音色。
+网页版五线谱识别与播放器。可识别 PDF、PNG 和 JPEG 印刷乐谱，也可直接导入 MusicXML；使用 OpenSheetMusicDisplay 显示五线谱，并通过 Web Audio 播放钢琴或中音萨克斯音色。
 
-当前稳定版本：[1.0.1](https://github.com/jianqiao0313/easy-score/releases/tag/v1.0.1)。Docker 标签 `1.0.1` 对应此版本，`latest` 跟随 `main` 的最新构建。
+当前稳定版本：[1.0.2](https://github.com/jianqiao0313/easy-score/releases/tag/v1.0.2)。Docker 标签 `1.0.2` 对应此版本，`latest` 跟随 `main` 的最新构建。
 
 ## 使用 Docker 启动
 
 镜像已发布到 [Docker Hub](https://hub.docker.com/r/jianqiao0313/easy-score)，包含完整识谱引擎和音色，无需额外安装 Java 或 Audiveris。
 
 ```sh
-docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.1
+docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.2
 ```
 
-打开 [http://localhost:4173](http://localhost:4173)。PDF 和识别结果保存在 `easy-score-data` 数据卷中；更新镜像时保留该卷即可。
+打开 [http://localhost:4173](http://localhost:4173)。导入的原文件、识别或解析结果以及历史记录保存在 `easy-score-data` 数据卷中；更新镜像时保留该卷即可。
 
 上面的单行命令适用于 x86_64 / amd64 主机。Apple Silicon 或其他 ARM 主机需在镜像名前加 `--platform linux/amd64`，并使用支持模拟运行的 Docker 环境。需要自动重启时，可再加 `--restart unless-stopped`。
 
 默认端口只允许本机访问；需要远程访问时，可通过反向代理提供服务。应用没有账户和登录功能，适合个人使用或可信网络部署。
 
-更新镜像时，将拉取和启动命令中的标签统一设置为目标版本（以下以 `1.0.1` 为例），并继续使用原数据卷：
+更新镜像时，将拉取和启动命令中的标签统一设置为目标版本（以下以 `1.0.2` 为例），并继续使用原数据卷：
 
 ```sh
-docker pull jianqiao0313/easy-score:1.0.1
+docker pull jianqiao0313/easy-score:1.0.2
 docker stop easy-score
 docker rm easy-score
 # 再次执行上面的 docker run 命令，继续使用原数据卷。
@@ -41,15 +41,16 @@ docker compose up -d --build
 
 ## 如何使用
 
-1. 上传印刷五线谱 PDF（最大 50 MB），等待识别完成。成功导入的乐谱会自动加入左侧“历史乐谱”，按导入时间倒序显示；点击即可重新打开、播放或查看原 PDF，无需重复识别。
-2. 选择中音萨克斯或 Salamander 三角钢琴（明亮、清晰的 Yamaha C5 采样）。首次使用默认中音萨克斯，以后优先读取浏览器保存的选择。
-3. 设置每行显示的小节数。默认“自动”会根据可用宽度自然排版并随窗口调整；手动选择 1–8 小节会固定每行数量和音符区域宽度，行首谱号、调号和拍号另留空间，最后一行不会拉伸。设置保存在当前浏览器的 `localStorage` 中。
-4. 点击播放，可暂停、跳到上一小节或下一小节、拖动进度条，也可调整速度、音量和节拍器。
-5. 切换到原始 PDF 对照，或导出 MusicXML 到制谱软件继续校对。
+1. 导入 PDF、PNG 或 JPEG 印刷五线谱并等待 OMR 识别，或导入 `.musicxml`、`.xml`、`.mxl` 文件直接解析播放。每个文件最大 50 MB；支持常用制谱软件导出的 `score-partwise` MusicXML。
+2. 成功导入的所有格式都会自动加入左侧“历史乐谱”，按导入时间倒序显示；点击即可重新打开和播放。PDF 与图片还可切换查看原谱，无需重复识别。
+3. 选择中音萨克斯或 Salamander 三角钢琴。中音萨克斯播放已针对采样覆盖与延音进行优化；首次使用默认中音萨克斯，以后优先读取浏览器保存的选择。
+4. 设置每行显示的小节数。默认“自动”会根据可用宽度自然排版并随窗口调整；手动选择 1–8 小节会固定每行数量和音符区域宽度，行首谱号、调号和拍号另留空间，最后一行不会拉伸。设置保存在当前浏览器的 `localStorage` 中。
+5. 点击播放，可暂停、跳到上一小节或下一小节、拖动进度条，也可调整速度、音量和节拍器。
+6. 对照原始 PDF 或图片，或导出 MusicXML 到制谱软件继续校对。
 
-历史乐谱读取服务端本地数据目录中的记录（开发环境为 `.local/jobs`，Docker 为 `/data/jobs`），刷新页面、换浏览器或重启服务后仍可使用。保留 Docker 数据卷即可保留历史；识别失败或文件缺失的记录不会出现在列表中。
+历史乐谱读取服务端本地数据目录中的记录（开发环境为 `.local/jobs`，Docker 为 `/data/jobs`），PDF、图片和 MusicXML 导入成功后都会保留。刷新页面、换浏览器或重启服务后仍可使用；保留 Docker 数据卷即可保留历史。导入失败或文件缺失的记录不会出现在列表中。
 
-识别在你部署的服务器上运行。OMR 可能产生错音、漏音和节奏错误，清晰的印刷谱效果更好；手写谱和复杂排版可能无法正确识别。中音萨克斯选项只改变音色，不会自动移调。音色采样随应用提供，加载失败时会提示并使用合成音色。
+PDF 与图片识别在你部署的服务器上运行。OMR 可能产生错音、漏音和节奏错误，清晰的印刷谱效果更好；手写谱和复杂排版可能无法正确识别。MusicXML 导入不经过 OMR，目前面向常用制谱软件导出的 `score-partwise` 文档，不承诺覆盖 MusicXML 的全部格式与扩展。中音萨克斯选项只改变音色，不会自动移调。音色采样随应用提供，加载失败时会提示并使用合成音色。
 
 ## 本地开发
 
@@ -62,7 +63,7 @@ npm run dev
 
 开发地址为 [http://127.0.0.1:4173](http://127.0.0.1:4173)，同一个服务提供前端和 API。
 
-PDF 识别还需要 Audiveris。Apple Silicon macOS 可以运行：
+PDF 与图片识别还需要 Audiveris。Apple Silicon macOS 可以运行：
 
 ```sh
 ./scripts/setup-omr.sh
@@ -92,7 +93,7 @@ node scripts/verify-live.mjs /path/to/score.pdf
 | `POPPLER_BIN` / `PYTHON_BIN` | 默认从 PATH 查找 `pdftoppm` / `python3` |
 | `OMR_TIMEOUT_MS` | 每个识别处理阶段的超时，默认 `600000` 毫秒 |
 
-- `server/`：上传接口、识别任务队列、PDF 预处理和 Audiveris 调用。
+- `server/`：上传接口、导入历史、PDF/图片识别任务和 MusicXML 直接解析。
 - `src/`：MusicXML 时间轴解析、音频播放、五线谱排版及界面交互。
 - `public/fonts/`：随应用分发的思源黑体可变字体与 OFL 许可。
 - `public/soundfonts/`：钢琴与中音萨克斯采样。

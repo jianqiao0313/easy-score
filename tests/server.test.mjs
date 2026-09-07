@@ -1,16 +1,33 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { zipSync, strToU8 } from 'fflate';
 import { createApp, MAX_UPLOAD_BYTES } from '../server/app.mjs';
-import { musicXmlFromMxl } from '../server/engine.mjs';
+import { createAudiverisEngine, musicXmlFromMxl } from '../server/engine.mjs';
 
 const TEST_PDF = Buffer.from('%PDF-1.7\n% fake test fixture only\n%%EOF');
 const TEST_XML = '<?xml version="1.0"?><score-partwise version="4.0"><part-list/></score-partwise>';
+const PLAYABLE_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note></measure></part>
+</score-partwise>`;
+const TEST_PNG = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from([0, 0, 0, 13]), Buffer.from('IHDR'),
+  Buffer.from([0, 0, 0, 1, 0, 0, 0, 1]),
+]);
+const TEST_JPEG = Buffer.from([
+  0xff, 0xd8,
+  0xff, 0xe0, 0x00, 0x02,
+  0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+  0xff, 0xd9,
+]);
 
 async function fixture(t, engine) {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'score-player-server-'));
@@ -60,6 +77,10 @@ function fakeEngine(overrides = {}) {
     },
     ...overrides,
   };
+}
+
+function utf16Le(text) {
+  return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]);
 }
 
 async function waitFor(base, id, expected = 'done') {
@@ -118,7 +139,7 @@ test('upload validates content type, PDF magic bytes, and the 50 MB boundary', a
     body: Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(expectedMaximum - 4)]),
   });
   assert.equal(tooLarge.status, 413);
-  assert.deepEqual(await tooLarge.json(), { error: 'PDF exceeds the 50 MB upload limit.' });
+  assert.deepEqual(await tooLarge.json(), { error: 'Upload exceeds the 50 MB limit.' });
 
   const acceptedJobs = await Promise.all([aboveOldLimit.json(), atLimit.json()]);
   const completedJobs = await Promise.all(acceptedJobs.map(({ id }) => waitFor(base, id)));
@@ -147,7 +168,10 @@ test('a raw PDF job persists, reports progress, and serves XML and the original 
     progress: 100,
     message: '识别完成',
     fileName: '四驱小子 betop.pdf',
+    sourceType: 'pdf',
+    sourceMime: 'application/pdf',
     xmlUrl: `/api/jobs/${queued.id}/score.musicxml`,
+    sourceUrl: `/api/jobs/${queued.id}/source`,
     pdfUrl: `/api/jobs/${queued.id}/source.pdf`,
   });
 
@@ -161,6 +185,203 @@ test('a raw PDF job persists, reports progress, and serves XML and the original 
   assert.deepEqual(Buffer.from(await pdfResponse.arrayBuffer()), TEST_PDF);
   assert.deepEqual(await readFile(path.join(jobsRoot, queued.id, 'source.pdf')), TEST_PDF);
   assert.equal(JSON.parse(await readFile(path.join(jobsRoot, queued.id, 'job.json'))).status, 'done');
+});
+
+test('MusicXML imports finish immediately, preserve the original, and survive restart without recognition', async (t) => {
+  let conversions = 0;
+  const engine = fakeEngine({ async convert() { conversions += 1; return { xml: TEST_XML }; } });
+  const { base, jobsRoot, demoRoot } = await fixture(t, engine);
+  const response = await fetch(`${base}/api/jobs`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/vnd.recordare.musicxml+xml',
+      'x-file-name': encodeURIComponent('../夜空中最亮的星.musicxml'),
+    },
+    body: PLAYABLE_XML,
+  });
+  assert.equal(response.status, 202);
+  const created = await response.json();
+  assert.deepEqual(created, {
+    id: created.id,
+    status: 'done',
+    progress: 100,
+    message: '导入完成',
+    fileName: '夜空中最亮的星.musicxml',
+    sourceType: 'musicxml',
+    sourceMime: 'application/vnd.recordare.musicxml+xml',
+    sourceUrl: `/api/jobs/${created.id}/source`,
+    xmlUrl: `/api/jobs/${created.id}/score.musicxml`,
+  });
+  assert.equal(conversions, 0);
+
+  const job = await fetch(`${base}/api/jobs/${created.id}`).then((item) => item.json());
+  assert.deepEqual(job, {
+    id: created.id,
+    status: 'done',
+    progress: 100,
+    message: '导入完成',
+    fileName: '夜空中最亮的星.musicxml',
+    sourceType: 'musicxml',
+    sourceMime: 'application/vnd.recordare.musicxml+xml',
+    sourceUrl: `/api/jobs/${created.id}/source`,
+    xmlUrl: `/api/jobs/${created.id}/score.musicxml`,
+  });
+  const source = await fetch(`${base}${job.sourceUrl}`);
+  assert.equal(source.headers.get('content-type'), 'application/vnd.recordare.musicxml+xml');
+  assert.deepEqual(Buffer.from(await source.arrayBuffer()), Buffer.from(PLAYABLE_XML));
+  assert.doesNotMatch(await readFile(path.join(jobsRoot, created.id, 'score.musicxml'), 'utf8'), /<!DOCTYPE/i);
+
+  const restarted = await createApp({ jobsRoot, demoRoot, engine });
+  const restartedBase = await serve(t, restarted);
+  const scores = await fetch(`${restartedBase}/api/scores`).then((item) => item.json());
+  assert.equal(conversions, 0);
+  assert.equal(scores.scores[0].id, created.id);
+  assert.equal(scores.scores[0].sourceType, 'musicxml');
+});
+
+test('MXL imports follow the safe container root and accept browser ZIP MIME aliases only for .mxl', async (t) => {
+  const { base } = await fixture(t, fakeEngine());
+  const mxl = zipSync({
+    'META-INF/container.xml': strToU8('<?xml version="1.0"?><container><rootfiles><rootfile full-path="scores/main.musicxml"/></rootfiles></container>'),
+    'scores/main.musicxml': strToU8(PLAYABLE_XML),
+    'ignored.xml': strToU8('<ignored/>'),
+  });
+  const accepted = await fetch(`${base}/api/jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/zip', 'x-file-name': 'score.mxl' },
+    body: mxl,
+  });
+  assert.equal(accepted.status, 202);
+  const imported = await accepted.json();
+  assert.equal(imported.status, 'done');
+  assert.equal(imported.sourceType, 'musicxml');
+  assert.equal(imported.sourceMime, 'application/vnd.recordare.musicxml');
+  assert.equal(imported.sourceUrl, `/api/jobs/${imported.id}/source`);
+
+  const bareZip = await fetch(`${base}/api/jobs`, {
+    method: 'POST', headers: { 'content-type': 'application/zip', 'x-file-name': 'score.zip' }, body: mxl,
+  });
+  assert.equal(bareZip.status, 415);
+
+  const traversal = zipSync({
+    'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>'),
+    'score.musicxml': strToU8(PLAYABLE_XML),
+    '../outside.txt': strToU8('unsafe'),
+  });
+  const unsafe = await fetch(`${base}/api/jobs`, {
+    method: 'POST', headers: { 'content-type': 'application/vnd.recordare.musicxml', 'x-file-name': 'unsafe.mxl' }, body: traversal,
+  });
+  assert.equal(unsafe.status, 400);
+  assert.match((await unsafe.json()).error, /unsafe path/i);
+});
+
+test('image imports validate MIME and magic bytes, preserve originals, and pass images directly to recognition', async (t) => {
+  const conversions = [];
+  const engine = fakeEngine({
+    async convert(options) {
+      conversions.push(options);
+      return { xml: TEST_XML };
+    },
+  });
+  const { base, jobsRoot, demoRoot } = await fixture(t, engine);
+  for (const [fileName, mime, bytes] of [
+    ['page.png', 'image/png', TEST_PNG],
+    ['page.jpeg', 'image/jpeg', TEST_JPEG],
+  ]) {
+    const accepted = await fetch(`${base}/api/jobs`, {
+      method: 'POST', headers: { 'content-type': mime, 'x-file-name': fileName }, body: bytes,
+    });
+    assert.equal(accepted.status, 202);
+    const created = await accepted.json();
+    const done = await waitFor(base, created.id);
+    assert.equal(done.sourceType, 'image');
+    assert.equal(done.sourceMime, mime);
+    const source = await fetch(`${base}${done.sourceUrl}`);
+    assert.equal(source.headers.get('content-type'), mime);
+    assert.deepEqual(Buffer.from(await source.arrayBuffer()), bytes);
+  }
+  assert.deepEqual(conversions.map(({ sourceType }) => sourceType), ['image', 'image']);
+  assert.ok(conversions.every(({ inputPath }) => /source\.(?:png|jpg)$/.test(inputPath)));
+
+  const restarted = await createApp({ jobsRoot, demoRoot, engine });
+  const restartedBase = await serve(t, restarted);
+  const restartedScores = await fetch(`${restartedBase}/api/scores`).then((response) => response.json());
+  assert.deepEqual(restartedScores.scores.map(({ sourceType }) => sourceType), ['image', 'image']);
+  assert.equal(conversions.length, 2);
+
+  const wrongMagic = await fetch(`${base}/api/jobs`, {
+    method: 'POST', headers: { 'content-type': 'image/png', 'x-file-name': 'fake.png' }, body: TEST_JPEG,
+  });
+  assert.equal(wrongMagic.status, 400);
+  assert.match((await wrongMagic.json()).error, /PNG/);
+
+  const hugePng = Buffer.from(TEST_PNG);
+  hugePng.writeUInt32BE(20_000, 16);
+  hugePng.writeUInt32BE(20_000, 20);
+  const hugeImage = await fetch(`${base}/api/jobs`, {
+    method: 'POST', headers: { 'content-type': 'image/png', 'x-file-name': 'huge.png' }, body: hugePng,
+  });
+  assert.equal(hugeImage.status, 400);
+  assert.match((await hugeImage.json()).error, /100 megapixel/);
+
+  const mismatchedType = await fetch(`${base}/api/jobs`, {
+    method: 'POST', headers: { 'content-type': 'image/jpeg', 'x-file-name': 'fake.png' }, body: TEST_PNG,
+  });
+  assert.equal(mismatchedType.status, 415);
+});
+
+test('MusicXML rejects entity declarations, internal DTD subsets, and scores without playable notes', async (t) => {
+  const { base } = await fixture(t, fakeEngine());
+  for (const xml of [
+    '<?xml version="1.0"?><!DOCTYPE score-partwise [<!ENTITY x "x">]><score-partwise>&x;</score-partwise>',
+    TEST_XML,
+    PLAYABLE_XML.replace('</note></measure>', '</measure></note>'),
+    PLAYABLE_XML.replace('</note></measure>', '</note></oops></measure>'),
+    PLAYABLE_XML.replace('<part-name>Piano</part-name>', '<part-name value="bad<value">Piano</part-name>'),
+    `junk${PLAYABLE_XML}`,
+    PLAYABLE_XML.replace('<score-partwise', '<!-- bad -- comment --><score-partwise'),
+  ]) {
+    const response = await fetch(`${base}/api/jobs`, {
+      method: 'POST', headers: { 'content-type': 'application/xml', 'x-file-name': 'bad.xml' }, body: xml,
+    });
+    assert.equal(response.status, 400);
+  }
+});
+
+test('UTF-16 MusicXML and MXL preserve source bytes while storing UTF-8 playable output', async (t) => {
+  const { base } = await fixture(t, fakeEngine());
+  const utf16Score = utf16Le(PLAYABLE_XML.replace('encoding="UTF-8"', 'encoding="UTF-16"'));
+  const uploads = [
+    {
+      name: 'utf16.musicxml',
+      mime: 'application/vnd.recordare.musicxml+xml',
+      body: utf16Score,
+    },
+    {
+      name: 'utf16.mxl',
+      mime: 'application/vnd.recordare.musicxml',
+      body: zipSync({
+        'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>'),
+        'score.musicxml': new Uint8Array(utf16Score),
+      }),
+    },
+  ];
+
+  for (const upload of uploads) {
+    const response = await fetch(`${base}/api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': upload.mime, 'x-file-name': upload.name },
+      body: upload.body,
+    });
+    assert.equal(response.status, 202);
+    const job = await response.json();
+    const source = Buffer.from(await fetch(`${base}${job.sourceUrl}`).then((item) => item.arrayBuffer()));
+    assert.deepEqual(source, Buffer.from(upload.body));
+    const output = Buffer.from(await fetch(`${base}${job.xmlUrl}`).then((item) => item.arrayBuffer()));
+    assert.equal(output.subarray(0, 3).toString(), '<?x');
+    assert.match(output.toString('utf8'), /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+    assert.doesNotMatch(output.toString('utf8'), /encoding="UTF-16"/i);
+  }
 });
 
 test('score listing returns only complete local imports newest first without exposing storage metadata', async (t) => {
@@ -191,11 +412,13 @@ test('score listing returns only complete local imports newest first without exp
   assert.deepEqual(await response.json(), { scores: [
     {
       id: newId, status: 'done', progress: 100, message: '识别完成', fileName: 'new.pdf',
+      sourceType: 'pdf', sourceMime: 'application/pdf', sourceUrl: `/api/jobs/${newId}/source`,
       xmlUrl: `/api/jobs/${newId}/score.musicxml`, pdfUrl: `/api/jobs/${newId}/source.pdf`,
       warnings: ['校对提示'], createdAt: '2026-03-01T00:00:00.000Z', updatedAt: '2026-02-01T00:00:00.000Z',
     },
     {
       id: oldId, status: 'done', progress: 100, message: '识别完成', fileName: 'old.pdf',
+      sourceType: 'pdf', sourceMime: 'application/pdf', sourceUrl: `/api/jobs/${oldId}/source`,
       xmlUrl: `/api/jobs/${oldId}/score.musicxml`, pdfUrl: `/api/jobs/${oldId}/source.pdf`,
       warnings: ['校对提示'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-04-01T00:00:00.000Z',
     },
@@ -287,7 +510,10 @@ test('demo endpoint serves only prepared real-job metadata', async (t) => {
     progress: 100,
     message: 'prepared test fixture',
     fileName: 'fixture.pdf',
+    sourceType: 'pdf',
+    sourceMime: 'application/pdf',
     xmlUrl: '/api/jobs/demo/score.musicxml',
+    sourceUrl: '/api/jobs/demo/source',
     pdfUrl: '/api/jobs/demo/source.pdf',
   });
 });
@@ -299,4 +525,102 @@ test('MXL extraction follows META-INF/container.xml', () => {
     'ignored.xml': strToU8('<ignored/>'),
   });
   assert.equal(musicXmlFromMxl(mxl), TEST_XML);
+});
+
+test('MXL extraction rejects forged expansion sizes and encrypted entries before decompression', () => {
+  const archive = Buffer.from(zipSync({
+    'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>'),
+    'score.musicxml': strToU8(PLAYABLE_XML),
+  }));
+  const centralSignature = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+
+  const oversized = Buffer.from(archive);
+  const firstCentral = oversized.indexOf(centralSignature);
+  oversized.writeUInt32LE(64 * 1024 * 1024 + 1, firstCentral + 24);
+  assert.throws(() => musicXmlFromMxl(oversized), (error) => error.statusCode === 413);
+
+  const encrypted = Buffer.from(archive);
+  const encryptedCentral = encrypted.indexOf(centralSignature);
+  encrypted.writeUInt16LE(encrypted.readUInt16LE(encryptedCentral + 8) | 1, encryptedCentral + 8);
+  assert.throws(() => musicXmlFromMxl(encrypted), /Encrypted MXL entries/);
+
+  const tooMany = Object.fromEntries(Array.from({ length: 256 }, (_, index) => [`extra-${index}.txt`, strToU8('x')]));
+  tooMany['META-INF/container.xml'] = strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>');
+  tooMany['score.musicxml'] = strToU8(PLAYABLE_XML);
+  assert.throws(() => musicXmlFromMxl(zipSync(tooMany)), /1-256 bounded entries/);
+});
+
+test('MXL extraction rejects malformed container XML and the wrong container hierarchy', () => {
+  const mxl = (container) => zipSync({
+    'META-INF/container.xml': strToU8(container),
+    'score.musicxml': strToU8(PLAYABLE_XML),
+  });
+  assert.throws(
+    () => musicXmlFromMxl(mxl('<evil><rootfile full-path="score.musicxml"/></evil>')),
+    /container document/i,
+  );
+  assert.throws(
+    () => musicXmlFromMxl(mxl('<container><rootfiles><rootfile full-path="score.musicxml"/></container>')),
+    /container\.xml is malformed/i,
+  );
+  assert.throws(
+    () => musicXmlFromMxl(mxl('<container><rootfiles><rootfile full-path="score.musicxml"></rootfiles></rootfile></container>')),
+    /container\.xml is malformed/i,
+  );
+  assert.throws(
+    () => musicXmlFromMxl(mxl('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></oops></container>')),
+    /container\.xml is malformed/i,
+  );
+  assert.throws(
+    () => musicXmlFromMxl(mxl('<container><rootfiles><rootfile full-path="bad<path"/></rootfiles></container>')),
+    /container\.xml is malformed/i,
+  );
+});
+
+test('Audiveris image conversion passes the stored image directly without PDF preprocessing', async (t) => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'score-player-engine-'));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const executable = path.join(temporary, 'fake-audiveris');
+  const inputPath = path.join(temporary, 'source.png');
+  const outputDir = path.join(temporary, 'output');
+  await mkdir(outputDir);
+  await writeFile(inputPath, TEST_PNG);
+  await writeFile(`${inputPath}.mxl`, zipSync({
+    'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>'),
+    'score.musicxml': strToU8(PLAYABLE_XML),
+  }));
+  await writeFile(executable, `#!/bin/sh
+printf '%s' "$7" > "$5/recognition-input.txt"
+cp "$7.mxl" "$5/result.mxl"
+`);
+  await chmod(executable, 0o755);
+
+  const engine = createAudiverisEngine({ executable });
+  const result = await engine.convert({ inputPath, outputDir, sourceType: 'image' });
+  assert.equal(await readFile(path.join(outputDir, 'recognition-input.txt'), 'utf8'), inputPath);
+  assert.match(result.xml, /<score-partwise/);
+  assert.match(result.xml, /<note>/);
+  assert.deepEqual(result.warnings, []);
+
+  const noOutputExecutable = path.join(temporary, 'fake-audiveris-no-output');
+  await writeFile(noOutputExecutable, '#!/bin/sh\nexit 0\n');
+  await chmod(noOutputExecutable, 0o755);
+  const noOutput = createAudiverisEngine({ executable: noOutputExecutable });
+  const emptyOutputDir = path.join(temporary, 'empty-output');
+  await mkdir(emptyOutputDir);
+  await assert.rejects(
+    noOutput.convert({ inputPath, outputDir: emptyOutputDir, sourceType: 'image' }),
+    (error) => /图片完整且包含清晰的五线谱/.test(error.publicMessage),
+  );
+
+  await writeFile(`${inputPath}.mxl`, zipSync({
+    'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>'),
+    'score.musicxml': strToU8(TEST_XML),
+  }));
+  const invalidOutputDir = path.join(temporary, 'invalid-output');
+  await mkdir(invalidOutputDir);
+  await assert.rejects(
+    engine.convert({ inputPath, outputDir: invalidOutputDir, sourceType: 'image' }),
+    (error) => /没有生成包含可播放音符的有效乐谱/.test(error.publicMessage),
+  );
 });

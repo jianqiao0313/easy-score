@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f4f0e7" />
-    <meta name="description" content="easy-score 是一款 PDF 乐谱识别与练习播放器。" />
+    <meta name="description" content="easy-score 支持 PDF、图片识谱和 MusicXML 导入，让你查看、播放并练习五线谱。" />
     <link rel="icon" href="/easy-score.svg" type="image/svg+xml" />
     <link rel="preload" href="/fonts/SourceHanSansCN-VF.otf.woff2" as="font" type="font/woff2" crossorigin />
-    <title>easy-score · PDF 乐谱播放器</title>
+    <title>easy-score · 乐谱播放器</title>
   </head>
   <body>
     <div id="app">
@@ -31,11 +31,11 @@
 
           <button class="upload-card" id="uploadButton" type="button">
             <span class="upload-icon" data-icon="upload" aria-hidden="true"></span>
-            <strong>导入 PDF 乐谱</strong>
+            <strong>导入乐谱</strong>
             <span>点击选择或拖放到这里</span>
-            <small>印刷五线谱 · 最大 50 MB</small>
+            <small>PDF · MusicXML · PNG / JPG<br />最大 50 MB</small>
           </button>
-          <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
+          <input id="fileInput" type="file" accept=".pdf,.musicxml,.xml,.mxl,.png,.jpg,.jpeg,application/pdf,application/vnd.recordare.musicxml+xml,application/vnd.recordare.musicxml,application/xml,text/xml,image/png,image/jpeg" hidden />
 
           <div class="library-section" aria-labelledby="historyHeading">
             <div class="section-label"><span id="historyHeading">历史乐谱</span><span id="historyCount">—</span></div>
@@ -64,7 +64,7 @@
             <div class="score-identity">
               <p class="eyebrow" id="scoreOrigin">尚未载入乐谱</p>
               <h2 id="scoreTitle">让纸上的旋律，再次流动</h2>
-              <p id="scoreComposer">导入印刷乐谱 PDF，识别后即可试听</p>
+              <p id="scoreComposer">导入 PDF、MusicXML 或图片，即可开始练习</p>
             </div>
             <div class="score-actions">
               <label class="measures-per-row">每行
@@ -81,8 +81,8 @@
                 </select>
               </label>
               <div class="view-tabs" role="tablist" aria-label="预览方式">
-                <button class="tab is-active" id="scoreTab" role="tab" aria-selected="true" aria-controls="scoreView" type="button"><span data-icon="score" aria-hidden="true"></span>识别乐谱</button>
-                <button class="tab" id="pdfTab" role="tab" aria-selected="false" aria-controls="pdfView" type="button"><span data-icon="pdf" aria-hidden="true"></span>原始 PDF</button>
+                <button class="tab is-active" id="scoreTab" role="tab" aria-selected="true" aria-controls="scoreView" type="button"><span data-icon="score" aria-hidden="true"></span>乐谱</button>
+                <button class="tab" id="pdfTab" role="tab" aria-selected="false" aria-controls="pdfView" type="button" disabled><span data-icon="pdf" aria-hidden="true"></span><span id="sourceTabLabel">原始 PDF</span></button>
               </div>
               <button class="icon-button" id="exportButton" type="button" disabled aria-label="导出 MusicXML" title="导出 MusicXML"><span data-icon="download" aria-hidden="true"></span></button>
             </div>
@@ -93,9 +93,9 @@
               <div class="empty-emblem" aria-hidden="true"><span data-icon="music"></span></div>
               <p class="eyebrow">YOUR SCORE, YOUR TEMPO</p>
               <h2>从一页乐谱开始</h2>
-              <p>easy-score 通过识谱服务处理 PDF，让你查看、聆听并按自己的速度练习。</p>
+              <p>导入 MusicXML 即可播放，也可识别 PDF 或 PNG / JPG 图片中的印刷五线谱，按自己的速度练习。</p>
               <div class="empty-actions">
-                <button class="primary-button" id="emptyUploadButton" type="button"><span data-icon="upload" aria-hidden="true"></span>导入 PDF</button>
+                <button class="primary-button" id="emptyUploadButton" type="button"><span data-icon="upload" aria-hidden="true"></span>导入乐谱</button>
               </div>
             </section>
 
@@ -119,9 +119,10 @@
               <div id="osmdContainer" aria-label="识别后的乐谱"></div>
             </div>
             <div class="pdf-view" id="pdfView" role="tabpanel" aria-labelledby="pdfTab" hidden>
-              <iframe id="pdfFrame" title="原始 PDF 预览"></iframe>
+              <iframe id="pdfFrame" title="原始 PDF 预览" hidden></iframe>
+              <img id="sourceImage" alt="导入的原始乐谱图片" hidden />
             </div>
-            <div class="drop-overlay" id="dropOverlay" aria-hidden="true"><strong>松开以导入乐谱</strong><span>PDF 将发送到当前识谱服务</span></div>
+            <div class="drop-overlay" id="dropOverlay" aria-hidden="true"><strong>松开以导入乐谱</strong><span>支持 PDF、MusicXML、PNG / JPG，最大 50 MB</span></div>
           </div>
 
           <div class="score-meta" id="scoreMeta" hidden>

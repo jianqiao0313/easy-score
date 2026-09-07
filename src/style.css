@@ -157,7 +157,7 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .transport-center { align-self: stretch; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; border-inline: 1px solid #ded9cf; }
 .transport-buttons { display: flex; align-items: center; gap: 17px; }.transport-buttons button { width: 29px; height: 29px; border: 0; background: transparent; color: #566159; font-size: 17px; cursor: pointer; }.transport-buttons .play-button { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--green); font-size: 12px; box-shadow: 0 5px 14px rgba(33,79,60,.22); }
 .timeline { width: min(520px, 75%); display: grid; grid-template-columns: 32px 1fr 32px; align-items: center; gap: 8px; color: #8c908a; font-size: 8px; }.timeline input { width: 100%; height: 3px; accent-color: var(--green); cursor: pointer; }
-.transport-measure { display: flex; align-items: center; justify-content: center; gap: 6px; }.transport-measure > * { line-height: 1; }
+.transport-measure { display: flex; align-items: center; justify-content: center; gap: 6px; transform: translateY(-2px); }.transport-measure > * { line-height: 1; }
 .transport-measure span { color: #92968f; font-size: 9px; }.transport-measure strong { font-size: 20px; }.transport-measure small { color: #999c96; font-size: 10px; }
 
 @keyframes pulse { 50% { transform: scale(1.035); } }

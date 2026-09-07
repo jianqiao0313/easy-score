@@ -1,12 +1,26 @@
 import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { strToU8, zipSync } from 'fflate';
 import { parseMusicXML } from '../src/musicxml.mjs';
 
 const image = process.argv[2] || 'easy-score:local';
 const name = `easy-score-smoke-${process.pid}`;
+const DIRECT_MUSIC_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1"><measure number="1">
+    <attributes>
+      <divisions>1</divisions>
+      <key><fifths>0</fifths></key>
+      <time><beats>4</beats><beat-type>4</beat-type></time>
+      <clef><sign>G</sign><line>2</line></clef>
+    </attributes>
+    <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
+  </measure></part>
+</score-partwise>`;
 
 function docker(...args) {
-  const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 60_000 });
+  const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 60_000, maxBuffer: 64 * 1024 * 1024 });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`docker ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
@@ -30,44 +44,135 @@ async function waitForHealth(baseUrl, timeoutMs = 90_000) {
   throw new Error(`container did not become healthy: ${lastError?.message || 'timeout'}`);
 }
 
-async function recognizePdf(baseUrl, pdfPath) {
-  const pdf = await readFile(pdfPath);
-  const created = await fetch(`${baseUrl}/api/jobs`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/pdf',
-      'x-file-name': encodeURIComponent('docker-smoke.pdf'),
-    },
-    body: pdf,
-  });
-  if (created.status !== 202) throw new Error(`PDF upload returned HTTP ${created.status}`);
-  const { id } = await created.json();
+function assertDoneMetadata(job, { id, fileName, sourceType, sourceMime, pdf = false }) {
+  if (job.id !== id || job.status !== 'done' || job.progress !== 100 || job.fileName !== fileName
+    || job.sourceType !== sourceType || job.sourceMime !== sourceMime
+    || job.sourceUrl !== `/api/jobs/${id}/source`
+    || job.xmlUrl !== `/api/jobs/${id}/score.musicxml`
+    || (pdf && job.pdfUrl !== `/api/jobs/${id}/source.pdf`)) {
+    throw new Error(`job metadata did not match the ${sourceType} source contract: ${JSON.stringify(job)}`);
+  }
+}
+
+async function fetchPlayableScore(baseUrl, job) {
+  const score = await fetch(`${baseUrl}${job.xmlUrl}`);
+  const xml = await score.text();
+  if (!score.ok || !xml.includes('<score-partwise')) {
+    throw new Error('job did not return a valid MusicXML score.');
+  }
+  const parsed = parseMusicXML(xml);
+  if (parsed.notes.length === 0 || parsed.totalBeats <= 0) {
+    throw new Error('job returned MusicXML without playable notes.');
+  }
+}
+
+async function fetchOriginalSource(baseUrl, job, expected) {
+  const source = await fetch(`${baseUrl}${job.sourceUrl}`);
+  const returned = Buffer.from(await source.arrayBuffer());
+  if (!source.ok || source.headers.get('content-type')?.split(';', 1)[0] !== job.sourceMime
+    || !returned.equals(expected)) {
+    throw new Error(`job did not preserve the uploaded ${job.sourceType} bytes.`);
+  }
+}
+
+async function waitForDone(baseUrl, id) {
   const deadline = Date.now() + 12 * 60_000;
   while (Date.now() < deadline) {
     const statusResponse = await fetch(`${baseUrl}/api/jobs/${id}`);
     if (!statusResponse.ok) throw new Error(`job status returned HTTP ${statusResponse.status}`);
     const job = await statusResponse.json();
     if (job.status === 'error') throw new Error(`OMR job failed: ${job.error || job.message}`);
-    if (job.status === 'done') {
-      const score = await fetch(`${baseUrl}/api/jobs/${id}/score.musicxml`);
-      const xml = await score.text();
-      if (!score.ok || !xml.includes('<score-partwise')) {
-        throw new Error('OMR job did not return a valid MusicXML score.');
-      }
-      const parsed = parseMusicXML(xml);
-      if (parsed.notes.length === 0 || parsed.totalBeats <= 0) {
-        throw new Error('OMR job returned MusicXML without playable notes.');
-      }
-      const source = await fetch(`${baseUrl}/api/jobs/${id}/source.pdf`);
-      const returnedPdf = Buffer.from(await source.arrayBuffer());
-      if (!source.ok || !returnedPdf.equals(pdf)) {
-        throw new Error('OMR job did not preserve the uploaded PDF bytes.');
-      }
-      return id;
-    }
+    if (job.status === 'done') return job;
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
   throw new Error('OMR smoke test timed out.');
+}
+
+async function uploadForRecognition(baseUrl, bytes, { fileName, sourceType, sourceMime, pdf = false }) {
+  const created = await fetch(`${baseUrl}/api/jobs`, {
+    method: 'POST',
+    headers: {
+      'content-type': sourceMime,
+      'x-file-name': encodeURIComponent(fileName),
+    },
+    body: bytes,
+  });
+  if (created.status !== 202) throw new Error(`${sourceType} upload returned HTTP ${created.status}`);
+  const { id } = await created.json();
+  const job = await waitForDone(baseUrl, id);
+  assertDoneMetadata(job, { id, fileName, sourceType, sourceMime, pdf });
+  await fetchPlayableScore(baseUrl, job);
+  await fetchOriginalSource(baseUrl, job, bytes);
+  if (pdf) {
+    const legacyPdf = await fetch(`${baseUrl}${job.pdfUrl}`);
+    if (!legacyPdf.ok || !Buffer.from(await legacyPdf.arrayBuffer()).equals(bytes)) {
+      throw new Error('OMR job did not preserve the PDF at its legacy URL.');
+    }
+  }
+  return id;
+}
+
+async function uploadDirectScore(baseUrl, bytes, { fileName, sourceType, sourceMime }) {
+  const response = await fetch(`${baseUrl}/api/jobs`, {
+    method: 'POST',
+    headers: {
+      'content-type': sourceMime,
+      'x-file-name': encodeURIComponent(fileName),
+    },
+    body: bytes,
+  });
+  if (response.status !== 202) throw new Error(`${sourceType} direct upload returned HTTP ${response.status}`);
+  const created = await response.json();
+  if (created.status !== 'done') {
+    throw new Error(`${sourceType} direct upload invoked the asynchronous OMR path: ${JSON.stringify(created)}`);
+  }
+  const jobResponse = await fetch(`${baseUrl}/api/jobs/${created.id}`);
+  if (!jobResponse.ok) throw new Error(`${sourceType} job lookup returned HTTP ${jobResponse.status}`);
+  const job = await jobResponse.json();
+  assertDoneMetadata(job, { id: created.id, fileName, sourceType, sourceMime });
+  await fetchPlayableScore(baseUrl, job);
+  await fetchOriginalSource(baseUrl, job, bytes);
+  return created.id;
+}
+
+async function verifyHistory(baseUrl, expectedEntries) {
+  const response = await fetch(`${baseUrl}/api/scores`);
+  if (!response.ok) throw new Error(`score history returned HTTP ${response.status}`);
+  const { scores } = await response.json();
+  for (const { id, fileName, sourceType, sourceMime } of expectedEntries) {
+    const score = scores.find((entry) => entry.id === id);
+    if (!score || score.status !== 'done' || score.fileName !== fileName
+      || score.sourceType !== sourceType || score.sourceMime !== sourceMime
+      || score.sourceUrl !== `/api/jobs/${id}/source`
+      || score.xmlUrl !== `/api/jobs/${id}/score.musicxml`) {
+      throw new Error(`completed direct import was missing from score history: ${id}`);
+    }
+  }
+}
+
+function createMxlFixture() {
+  return Buffer.from(zipSync({
+    mimetype: [strToU8('application/vnd.recordare.musicxml'), { level: 0 }],
+    'META-INF/container.xml': strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="score.musicxml" media-type="application/vnd.recordare.musicxml+xml"/></rootfiles>
+</container>`),
+    'score.musicxml': strToU8(DIRECT_MUSIC_XML),
+  }));
+}
+
+function renderFirstPageAsPng(pdfPath) {
+  docker('cp', pdfPath, `${name}:/tmp/docker-smoke.pdf`);
+  const encoded = docker('exec', name, 'sh', '-c', [
+    'pdftoppm -png -f 1 -l 1 -singlefile -r 200',
+    '/tmp/docker-smoke.pdf /tmp/docker-smoke-page >/dev/null 2>&1',
+    '&& base64 -w 0 /tmp/docker-smoke-page.png',
+  ].join(' '));
+  const png = Buffer.from(encoded, 'base64');
+  if (png.length < 8 || !png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
+    throw new Error('pdftoppm did not produce a valid PNG fixture.');
+  }
+  return png;
 }
 
 let started = false;
@@ -135,12 +240,57 @@ try {
     throw new Error('local Salamander piano sample was not served');
   }
 
+  const musicXmlBytes = Buffer.from(DIRECT_MUSIC_XML);
+  const musicXmlId = await uploadDirectScore(baseUrl, musicXmlBytes, {
+    fileName: 'docker-direct.musicxml',
+    sourceType: 'musicxml',
+    sourceMime: 'application/vnd.recordare.musicxml+xml',
+  });
+  const mxlBytes = createMxlFixture();
+  const mxlId = await uploadDirectScore(baseUrl, mxlBytes, {
+    fileName: 'docker-direct.mxl',
+    sourceType: 'musicxml',
+    sourceMime: 'application/vnd.recordare.musicxml',
+  });
+  await verifyHistory(baseUrl, [
+    {
+      id: musicXmlId,
+      fileName: 'docker-direct.musicxml',
+      sourceType: 'musicxml',
+      sourceMime: 'application/vnd.recordare.musicxml+xml',
+    },
+    {
+      id: mxlId,
+      fileName: 'docker-direct.mxl',
+      sourceType: 'musicxml',
+      sourceMime: 'application/vnd.recordare.musicxml',
+    },
+  ]);
+
   let omr = 'skipped (set EASY_SCORE_SMOKE_PDF to run a real recognition job)';
+  let imageOmr = omr;
   if (process.env.EASY_SCORE_SMOKE_PDF) {
-    const id = await recognizePdf(baseUrl, process.env.EASY_SCORE_SMOKE_PDF);
-    omr = `passed (job ${id})`;
+    const pdf = await readFile(process.env.EASY_SCORE_SMOKE_PDF);
+    const pdfId = await uploadForRecognition(baseUrl, pdf, {
+      fileName: 'docker-smoke.pdf', sourceType: 'pdf', sourceMime: 'application/pdf', pdf: true,
+    });
+    omr = `passed (job ${pdfId})`;
+    const png = renderFirstPageAsPng(process.env.EASY_SCORE_SMOKE_PDF);
+    const imageId = await uploadForRecognition(baseUrl, png, {
+      fileName: 'docker-smoke.png', sourceType: 'image', sourceMime: 'image/png',
+    });
+    imageOmr = `passed (job ${imageId})`;
   }
-  console.log(JSON.stringify({ image, audiveris: '5.11.0', health: 'passed', web: 'passed', licenses: 'passed', omr }, null, 2));
+  console.log(JSON.stringify({
+    image,
+    audiveris: '5.11.0',
+    health: 'passed',
+    web: 'passed',
+    licenses: 'passed',
+    directImports: `passed (MusicXML ${musicXmlId}; MXL ${mxlId})`,
+    omr,
+    imageOmr,
+  }, null, 2));
 } finally {
   if (started) spawnSync('docker', ['rm', '--force', name], { stdio: 'ignore', timeout: 15_000 });
 }

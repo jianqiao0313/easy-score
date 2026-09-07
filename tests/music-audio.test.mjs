@@ -73,9 +73,20 @@ function decodedBuffer(samples, duration = 2) {
   const channel = Float32Array.from(samples);
   return {
     duration,
+    sampleRate: channel.length / duration,
     numberOfChannels: 1,
     getChannelData() { return channel; },
   };
+}
+
+function loopBoundaryError(channel, sampleRate, startTime, endTime) {
+  const start = Math.round(startTime * sampleRate);
+  const end = Math.round(endTime * sampleRate);
+  let error = 0;
+  for (let offset = -8; offset <= 8; offset += 1) {
+    error += (channel[start + offset] - channel[end + offset]) ** 2;
+  }
+  return error;
 }
 
 const score = {
@@ -208,6 +219,62 @@ test('ScorePlayer pitch-shifts the nearest audible alto sax sample when the requ
   assert.deepEqual(fetchedSamples, ['sax-d6', 'sax-db6', 'sax-c6']);
   assert.ok(Math.abs(source.playbackRate.value - 2 ** (2 / 12)) < 1e-10);
   assert.match(statuses.at(-1).message, /FluidR3_GM 中音萨克斯/);
+  player.stop();
+  await player.dispose();
+});
+
+test('ScorePlayer aligns the alto sax loop waveform and releases after the written note duration', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  const originalDecode = FakeAudioContext.prototype.decodeAudioData;
+  FakeAudioContext.instances.length = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  const sampleRate = 1000;
+  const duration = 2;
+  const channel = Float32Array.from({ length: sampleRate * duration }, (_, index) => {
+    const time = index / sampleRate;
+    return Math.sin(2 * Math.PI * 37 * time) * (0.7 + 0.08 * Math.sin(2 * Math.PI * 0.8 * time));
+  });
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('saxophone.json')) {
+      return { ok: true, async json() { return { C4: 'sax-c4' }; } };
+    }
+    return { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+  };
+  FakeAudioContext.prototype.decodeAudioData = async () => ({
+    duration,
+    sampleRate,
+    numberOfChannels: 1,
+    getChannelData() { return channel; },
+  });
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+    FakeAudioContext.prototype.decodeAudioData = originalDecode;
+  });
+
+  const player = new ScorePlayer();
+  await player.load({ ...score, notes: [{ ...score.notes[0], durationBeats: 2 }] });
+  await player.play();
+
+  const source = FakeAudioContext.instances[0].bufferSources[0];
+  assert.equal(source.loop, true);
+  assert.ok(source.loopStart >= duration * 0.31 && source.loopStart <= duration * 0.33);
+  assert.ok(source.loopEnd >= duration * 0.68 && source.loopEnd <= duration * 0.82);
+  assert.ok(
+    loopBoundaryError(channel, sampleRate, source.loopStart, source.loopEnd)
+      < loopBoundaryError(channel, sampleRate, duration * 0.25, duration * 0.72) * 0.01,
+  );
+
+  const noteStart = source.started.when;
+  const noteEnd = noteStart + 1;
+  assert.deepEqual(source.connections[0].gain.events, [
+    { type: 'set', value: 0.0001, time: noteStart },
+    { type: 'linear', value: 0.46, time: noteStart + 0.008 },
+    { type: 'set', value: 0.46, time: noteEnd },
+    { type: 'linear', value: 0.0001, time: noteEnd + 0.1 },
+  ]);
+  assert.equal(source.stopTime, noteEnd + 0.1);
   player.stop();
   await player.dispose();
 });

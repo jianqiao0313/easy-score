@@ -5,6 +5,7 @@ import { syncCursorToBeat } from './cursor.mjs';
 import { loadPreferences, saveInstrument, saveMeasuresPerRow } from './preferences.mjs';
 import { markMeasureRowEnds, musicXmlWithSystemBreaks } from './score-layout.mjs';
 import { renderIcon, renderIcons } from './icons.js';
+import { importFormat } from './import-file.mjs';
 import './style.css';
 
 const $ = (selector) => document.querySelector(selector);
@@ -14,7 +15,7 @@ const ui = {
   dropZone: $('#dropZone'), dropOverlay: $('#dropOverlay'), emptyState: $('#emptyState'),
   processingState: $('#processingState'), errorState: $('#errorState'), errorMessage: $('#errorMessage'), retryButton: $('#retryButton'), progressNumber: $('#progressNumber'),
   progressBar: $('#progressBar'), jobStatusLabel: $('#jobStatusLabel'), jobStatusTitle: $('#jobStatusTitle'), jobStatusMessage: $('#jobStatusMessage'), scoreView: $('#scoreView'),
-  pdfView: $('#pdfView'), pdfFrame: $('#pdfFrame'), osmdContainer: $('#osmdContainer'), scoreTab: $('#scoreTab'), pdfTab: $('#pdfTab'),
+  pdfView: $('#pdfView'), pdfFrame: $('#pdfFrame'), sourceImage: $('#sourceImage'), sourceTabLabel: $('#sourceTabLabel'), osmdContainer: $('#osmdContainer'), scoreTab: $('#scoreTab'), pdfTab: $('#pdfTab'),
   exportButton: $('#exportButton'), scoreOrigin: $('#scoreOrigin'), scoreTitle: $('#scoreTitle'), scoreComposer: $('#scoreComposer'), scoreMeta: $('#scoreMeta'),
   measuresPerRow: $('#measuresPerRow'),
   timeSignature: $('#timeSignature'), keySignature: $('#keySignature'), measureCount: $('#measureCount'), warningCount: $('#warningCount'), soundSource: $('#soundSource'),
@@ -80,6 +81,7 @@ function setView(view) {
 }
 
 function setTab(tab) {
+  if (tab === 'pdf' && (ui.pdfTab.hidden || ui.pdfTab.disabled)) return;
   currentTab = tab;
   const scoreSelected = tab === 'score';
   ui.scoreTab.classList.toggle('is-active', scoreSelected);
@@ -105,6 +107,7 @@ function showError(message, action) {
 
 function statusCopy(job) {
   if (job.status === 'loading') return ['历史乐谱', '正在打开乐谱', '正在读取本地保存的识别结果。'];
+  if (job.sourceType === 'musicxml') return ['正在导入', '正在读取 MusicXML 乐谱', job.message || '正在解析音符与排版。'];
   if (job.status === 'queued') return ['等待识别', '乐谱已进入处理队列', job.message || '正在等待识谱引擎。'];
   return ['正在识别', '正在把乐谱转换为可播放音符', job.message || '页数较多时可能需要几分钟，请保持此页面打开。'];
 }
@@ -117,9 +120,9 @@ function showJob(job) {
   ui.jobStatusLabel.textContent = label;
   ui.jobStatusTitle.textContent = title;
   ui.jobStatusMessage.textContent = message;
-  ui.scoreOrigin.textContent = activeJobSource === 'history' ? '本地历史乐谱' : '本次识别任务';
+  ui.scoreOrigin.textContent = activeJobSource === 'history' ? '本地历史乐谱' : '本次导入';
   ui.scoreTitle.textContent = job.fileName || '正在读取乐谱';
-  ui.scoreComposer.textContent = `${progress}% · OMR 结果可能需要对照原谱校验`;
+  ui.scoreComposer.textContent = job.sourceType === 'musicxml' ? `${progress}% · 正在读取乐谱文件` : `${progress}% · 识别结果请对照原谱校验`;
   setView('processingState');
 }
 
@@ -166,13 +169,14 @@ async function refreshHistory() {
       button.title = job.fileName;
       item.querySelector('strong').textContent = job.fileName;
       const date = new Date(job.createdAt);
-      item.querySelector('small').textContent = Number.isFinite(date.getTime()) ? `${date.toLocaleDateString('zh-CN')} · 已识别` : '已识别';
+      const status = job.sourceType === 'musicxml' ? '已导入' : '已识别';
+      item.querySelector('small').textContent = Number.isFinite(date.getTime()) ? `${date.toLocaleDateString('zh-CN')} · ${status}` : status;
       button.addEventListener('click', () => loadHistoryScore(job));
       return item;
     });
     ui.historyList.replaceChildren(...items);
     ui.historyCount.textContent = String(scores.length);
-    ui.historyStatus.textContent = '暂无历史乐谱，导入 PDF 识别成功后会显示在这里。';
+    ui.historyStatus.textContent = '暂无历史乐谱，成功导入后会显示在这里。';
     ui.historyStatus.hidden = scores.length > 0;
     updateHistorySelection();
   } catch {
@@ -207,20 +211,21 @@ async function uploadFile(file) {
   const request = ++activeRequest;
   resetLoadedState();
   activeJobSource = 'upload';
-  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+  const format = importFormat(file);
+  if (!format) {
     ui.fileInput.value = '';
-    return showError('请选择 PDF 格式的印刷乐谱。', () => ui.fileInput.click());
+    return showError('请选择 PDF、MusicXML（.musicxml / .xml / .mxl）或 PNG / JPG 乐谱图片。', () => ui.fileInput.click());
   }
   if (file.size > 50 * 1024 * 1024) {
     ui.fileInput.value = '';
-    return showError('文件超过 50 MB，请选择更小的 PDF。', () => ui.fileInput.click());
+    return showError('文件超过 50 MB，请选择更小的乐谱文件。', () => ui.fileInput.click());
   }
   retryAction = () => uploadFile(file);
-  showJob({ status: 'queued', progress: 0, fileName: file.name, message: '正在安全地上传到识谱服务。' });
+  showJob({ status: 'queued', sourceType: format.sourceType, progress: 0, fileName: file.name, message: '正在上传乐谱文件。' });
   try {
     const job = await fetchJson('/api/jobs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/pdf', 'X-File-Name': encodeURIComponent(file.name) },
+      headers: { 'Content-Type': format.mime, 'X-File-Name': encodeURIComponent(file.name) },
       body: file,
     });
     await handleJob({ ...job, fileName: job.fileName || file.name }, request);
@@ -247,7 +252,6 @@ async function handleJob(job, request) {
 
 async function loadCompletedJob(job, request) {
   const xmlUrl = job.xmlUrl || `/api/jobs/${encodeURIComponent(job.id)}/score.musicxml`;
-  const pdfUrl = job.pdfUrl || `/api/jobs/${encodeURIComponent(job.id)}/source.pdf`;
   const response = await fetch(xmlUrl);
   if (!response.ok) throw new Error(`MusicXML 读取失败（${response.status}）`);
   const source = await response.text();
@@ -264,7 +268,7 @@ async function loadCompletedJob(job, request) {
   if (request !== activeRequest) return;
   player.setTempo(parsed.tempo || 96);
   player.setVolume(Number(ui.volumeRange.value) / 100);
-  setPdfSource(pdfUrl);
+  setOriginalSource(job);
   populateScore(job);
   updateHistorySelection();
   setTab('score');
@@ -371,8 +375,20 @@ async function renderScore(source, request, layoutRequest = ++layoutRenderReques
   }
 }
 
-function setPdfSource(url) {
-  ui.pdfFrame.src = url;
+function setOriginalSource(job) {
+  const type = job.sourceType || 'pdf';
+  ui.pdfFrame.removeAttribute('src');
+  ui.sourceImage.removeAttribute('src');
+  ui.pdfFrame.hidden = type !== 'pdf';
+  ui.sourceImage.hidden = type !== 'image';
+  ui.pdfTab.hidden = type === 'musicxml';
+  ui.pdfTab.disabled = type === 'musicxml';
+  if (type === 'musicxml') return;
+  const url = job.sourceUrl || job.pdfUrl || `/api/jobs/${encodeURIComponent(job.id)}/source.pdf`;
+  ui.sourceTabLabel.textContent = type === 'image' ? '原始图片' : '原始 PDF';
+  renderIcon(ui.pdfTab.querySelector('[data-icon]'), type === 'image' ? 'image' : 'pdf');
+  if (type === 'image') ui.sourceImage.src = url;
+  else ui.pdfFrame.src = url;
 }
 
 function populateScore(job) {
@@ -380,7 +396,8 @@ function populateScore(job) {
   const title = parsedTitle && parsedTitle !== '未命名乐谱' ? parsedTitle : (job.fileName || '未命名乐谱');
   const composer = score.composer?.trim() || '作曲者未标注';
   const bpm = Math.max(30, Math.min(240, Math.round(score.tempo || 96)));
-  ui.scoreOrigin.textContent = activeJobSource === 'history' ? '真实 PDF · 本地历史乐谱' : '真实 PDF · 本次识别结果';
+  const sourceLabel = { pdf: 'PDF', image: '图片', musicxml: 'MusicXML' }[job.sourceType || 'pdf'];
+  ui.scoreOrigin.textContent = `${sourceLabel} · ${activeJobSource === 'history' ? '本地历史乐谱' : '本次导入'}`;
   ui.scoreTitle.textContent = title;
   ui.scoreComposer.textContent = composer;
   ui.nowPlayingTitle.textContent = title;
@@ -397,7 +414,7 @@ function populateScore(job) {
   }));
   ui.warningDetails.hidden = warnings.length === 0;
   ui.warningDetails.open = warnings.length > 0;
-  setPracticeTip('识别提示', warnings[0] || 'OMR 可能有误差，请与原谱对照练习。');
+  setPracticeTip(job.sourceType === 'musicxml' ? '练习提示' : '识别提示', warnings[0] || (job.sourceType === 'musicxml' ? 'MusicXML 已载入，可调整速度、选择音色或从任意小节开始练习。' : 'OMR 可能有误差，请与原谱对照练习。'));
   ui.scoreMeta.hidden = false;
   ui.exportButton.disabled = false;
   [ui.playButton, ui.previousButton, ui.forwardButton, ui.seekRange].forEach((element) => { element.disabled = false; });
@@ -418,6 +435,9 @@ function resetLoadedState() {
   ui.scoreMeta.hidden = true;
   ui.warningDetails.hidden = true;
   ui.exportButton.disabled = true;
+  ui.pdfTab.disabled = true;
+  ui.pdfFrame.removeAttribute('src');
+  ui.sourceImage.removeAttribute('src');
   [ui.playButton, ui.previousButton, ui.forwardButton, ui.seekRange].forEach((element) => { element.disabled = true; });
   setPlaying(false);
 }

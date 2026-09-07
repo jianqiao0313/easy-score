@@ -12,6 +12,11 @@ const SILENCE_PEAK_THRESHOLD = 0.0005;
 const SAMPLE_FALLBACK_SEMITONES = 12;
 const PIANO_ATTACK_SECONDS = 0.005;
 const PIANO_RELEASE_SECONDS = 0.3;
+const SAX_ATTACK_SECONDS = 0.008;
+const SAX_RELEASE_SECONDS = 0.1;
+const SAX_LOOP_START_RATIO = 0.32;
+const SAX_LOOP_SEARCH_START_RATIO = 0.68;
+const SAX_LOOP_SEARCH_END_RATIO = 0.82;
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -25,6 +30,50 @@ function midiToSampleName(midi) {
 function safeStop(node, when = 0) {
   try { node.stop(when); } catch { /* A source may already have ended. */ }
   try { node.disconnect(); } catch { /* Disconnect is best-effort. */ }
+}
+
+function findSaxLoop(buffer) {
+  if (!Number.isFinite(buffer?.duration) || buffer.duration <= 0.4) return null;
+  const fallback = {
+    start: buffer.duration * SAX_LOOP_START_RATIO,
+    end: buffer.duration * ((SAX_LOOP_SEARCH_START_RATIO + SAX_LOOP_SEARCH_END_RATIO) / 2),
+  };
+  if (!Number.isFinite(buffer.numberOfChannels) || typeof buffer.getChannelData !== 'function') return fallback;
+
+  const channels = [];
+  for (let channelIndex = 0; channelIndex < buffer.numberOfChannels; channelIndex += 1) {
+    const channel = buffer.getChannelData(channelIndex);
+    if (channel?.length) channels.push(channel);
+  }
+  if (!channels.length) return fallback;
+
+  const frameCount = Math.min(...channels.map(({ length }) => length));
+  const sampleRate = Number.isFinite(buffer.sampleRate) && buffer.sampleRate > 0
+    ? buffer.sampleRate
+    : frameCount / buffer.duration;
+  const comparisonRadius = Math.min(48, Math.max(8, Math.floor(sampleRate * 0.001)));
+  const startIndex = Math.floor(frameCount * SAX_LOOP_START_RATIO);
+  const searchStart = Math.max(startIndex + comparisonRadius + 1, Math.floor(frameCount * SAX_LOOP_SEARCH_START_RATIO));
+  const searchEnd = Math.min(frameCount - comparisonRadius - 1, Math.floor(frameCount * SAX_LOOP_SEARCH_END_RATIO));
+  if (startIndex < comparisonRadius || searchStart >= searchEnd) return fallback;
+
+  let bestEnd = searchStart;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let candidate = searchStart; candidate <= searchEnd; candidate += 1) {
+    let score = 0;
+    for (const channel of channels) {
+      for (let offset = -comparisonRadius; offset <= comparisonRadius; offset += 4) {
+        const difference = channel[startIndex + offset] - channel[candidate + offset];
+        score += difference * difference;
+      }
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      bestEnd = candidate;
+    }
+  }
+
+  return { start: startIndex / sampleRate, end: bestEnd / sampleRate };
 }
 
 export class ScorePlayer {
@@ -287,7 +336,9 @@ export class ScorePlayer {
       for (const sourceMidi of candidates) {
         if (!sampleMap[midiToSampleName(sourceMidi)]) continue;
         const buffer = await this._decodeSample(instrumentId, sampleMap, sourceMidi);
-        if (this._isAudibleBuffer(buffer)) return { buffer, sourceMidi };
+        if (this._isAudibleBuffer(buffer)) {
+          return { buffer, sourceMidi, loop: instrumentId === 'saxophone' ? findSaxLoop(buffer) : null };
+        }
       }
     }
     return null;
@@ -399,7 +450,7 @@ export class ScorePlayer {
   }
 
   _scheduleSample(midi, sample, when, duration, offset) {
-    const { buffer, sourceMidi } = sample;
+    const { buffer, sourceMidi, loop } = sample;
     const source = this._context.createBufferSource();
     const envelope = this._context.createGain();
     source.buffer = buffer;
@@ -412,20 +463,21 @@ export class ScorePlayer {
       envelope.gain.linearRampToValueAtTime(0.72, when + PIANO_ATTACK_SECONDS);
       envelope.gain.setValueAtTime(0.72, when + duration);
       envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration + PIANO_RELEASE_SECONDS);
-    } else if (buffer.duration > 0.4) {
-      envelope.gain.linearRampToValueAtTime(0.5, when + 0.015);
+    } else if (loop) {
+      envelope.gain.linearRampToValueAtTime(0.46, when + SAX_ATTACK_SECONDS);
       source.loop = true;
-      source.loopStart = buffer.duration * 0.25;
-      source.loopEnd = buffer.duration * 0.72;
-      envelope.gain.setValueAtTime(0.5, when + Math.max(0.02, duration - 0.08));
-      envelope.gain.linearRampToValueAtTime(0.0001, when + duration);
+      source.loopStart = loop.start;
+      source.loopEnd = loop.end;
+      envelope.gain.setValueAtTime(0.46, when + duration);
+      envelope.gain.linearRampToValueAtTime(0.0001, when + duration + SAX_RELEASE_SECONDS);
     } else {
       envelope.gain.linearRampToValueAtTime(0.5, when + 0.015);
       envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration + 0.12);
     }
     this._trackSource(source);
     source.start(when, Math.min(offset * playbackRate, Math.max(0, buffer.duration - 0.02)));
-    source.stop(when + duration + (this._instrumentId === 'piano' ? PIANO_RELEASE_SECONDS : 0.14));
+    const release = this._instrumentId === 'piano' ? PIANO_RELEASE_SECONDS : loop ? SAX_RELEASE_SECONDS : 0.14;
+    source.stop(when + duration + release);
   }
 
   _scheduleSynth(midi, when, duration) {

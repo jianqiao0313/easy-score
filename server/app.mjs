@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promi
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { createAudiverisEngine } from './engine.mjs';
+import { resolveUploadFormat, validateUpload } from './imports.mjs';
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const SAFE_JOB_ID = /^[A-Za-z0-9_-]+$/;
@@ -30,7 +31,7 @@ async function atomicJson(file, value) {
 async function readBody(request, maximum) {
   const declared = Number(request.headers['content-length']);
   if (Number.isFinite(declared) && declared > maximum) {
-    const failure = new Error(`PDF exceeds the ${maximum / 1024 / 1024} MB upload limit.`);
+    const failure = new Error(`Upload exceeds the ${maximum / 1024 / 1024} MB limit.`);
     failure.statusCode = 413;
     throw failure;
   }
@@ -40,7 +41,7 @@ async function readBody(request, maximum) {
   for await (const chunk of request) {
     size += chunk.length;
     if (size > maximum) {
-      const failure = new Error(`PDF exceeds the ${maximum / 1024 / 1024} MB upload limit.`);
+      const failure = new Error(`Upload exceeds the ${maximum / 1024 / 1024} MB limit.`);
       failure.statusCode = 413;
       throw failure;
     }
@@ -50,7 +51,7 @@ async function readBody(request, maximum) {
 }
 
 function safeFileName(header) {
-  if (!header) return 'score.pdf';
+  if (!header) return '';
   let decoded;
   try {
     decoded = decodeURIComponent(header);
@@ -60,11 +61,23 @@ function safeFileName(header) {
     throw failure;
   }
   const fileName = path.basename(decoded.replaceAll('\\', '/')).trim();
-  return fileName || 'score.pdf';
+  return fileName;
 }
 
 function validTimestamp(value) {
   return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function sourceType(job) {
+  return job.sourceType || 'pdf';
+}
+
+function sourceMime(job) {
+  return job.sourceMime || 'application/pdf';
+}
+
+function sourceFile(job) {
+  return job.sourceFile || 'source.pdf';
 }
 
 function publicJob(job, { includeTimestamps = false } = {}) {
@@ -74,10 +87,13 @@ function publicJob(job, { includeTimestamps = false } = {}) {
     progress: job.progress,
     message: job.message,
     fileName: job.fileName,
+    sourceType: sourceType(job),
+    sourceMime: sourceMime(job),
   };
   if (job.status === 'done') {
     result.xmlUrl = `/api/jobs/${job.id}/score.musicxml`;
-    result.pdfUrl = `/api/jobs/${job.id}/source.pdf`;
+    result.sourceUrl = `/api/jobs/${job.id}/source`;
+    if (sourceType(job) === 'pdf') result.pdfUrl = `/api/jobs/${job.id}/source.pdf`;
   }
   if (job.warnings?.length) result.warnings = job.warnings;
   if (includeTimestamps && validTimestamp(job.createdAt)) result.createdAt = job.createdAt;
@@ -153,23 +169,30 @@ export class JobStore {
     await pending;
   }
 
-  async create(fileName, pdf) {
+  async create({ fileName, format, body, scoreXml = null }) {
     const id = randomUUID();
     const directory = this.directory(id);
     await mkdir(directory, { recursive: true });
-    await writeFile(path.join(directory, 'source.pdf'), pdf);
+    await writeFile(path.join(directory, format.sourceFile), body);
+    if (scoreXml !== null) await writeFile(path.join(directory, 'score.musicxml'), scoreXml);
     const job = {
       id,
-      status: 'queued',
-      progress: 5,
-      message: '等待识别引擎',
+      status: scoreXml === null ? 'queued' : 'done',
+      progress: scoreXml === null ? 5 : 100,
+      message: scoreXml === null ? '等待识别引擎' : '导入完成',
       fileName,
+      sourceType: format.sourceType,
+      sourceMime: format.sourceMime,
+      sourceFile: format.sourceFile,
       warnings: [],
       createdAt: new Date().toISOString(),
     };
+    if (scoreXml !== null) job.updatedAt = job.createdAt;
     await this.save(job);
-    this.queue.push(id);
-    void this.drain();
+    if (scoreXml === null) {
+      this.queue.push(id);
+      void this.drain();
+    }
     return job;
   }
 
@@ -180,14 +203,14 @@ export class JobStore {
       const directory = path.join(this.root, entry.name);
       try {
         const metadataPath = path.join(directory, 'job.json');
-        const [job, metadata, pdf, xml] = await Promise.all([
-          readFile(metadataPath, 'utf8').then(JSON.parse),
+        const job = await readFile(metadataPath, 'utf8').then(JSON.parse);
+        const [metadata, source, xml] = await Promise.all([
           stat(metadataPath),
-          stat(path.join(directory, 'source.pdf')),
+          stat(path.join(directory, sourceFile(job))),
           stat(path.join(directory, 'score.musicxml')),
         ]);
         if (!isCompleteJobMetadata(job, entry.name)
-          || !pdf.isFile() || pdf.size === 0
+          || !source.isFile() || source.size === 0
           || !xml.isFile() || xml.size === 0) return null;
         const newestTimestamp = validTimestamp(job.createdAt)
           ? Date.parse(job.createdAt)
@@ -219,8 +242,9 @@ export class JobStore {
       await this.save(job);
       try {
         const result = await this.engine.convert({
-          inputPath: path.join(directory, 'source.pdf'),
+          inputPath: path.join(directory, sourceFile(job)),
           outputDir: directory,
+          sourceType: sourceType(job),
           onProgress: (progress, message) => {
             job.progress = Math.max(job.progress, Math.min(95, progress));
             job.message = message || 'Audiveris 正在分析乐谱';
@@ -278,15 +302,14 @@ export async function createApp({
         return json(response, 200, { ok: true, engine: await engine.health(), demoAvailable: demo?.status === 'done' });
       }
       if (request.method === 'POST' && url.pathname === '/api/jobs') {
-        if ((request.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase() !== 'application/pdf') {
-          return error(response, 415, 'Content-Type must be application/pdf.');
-        }
+        const hasFileName = Boolean(request.headers['x-file-name']);
+        const requestedFileName = safeFileName(request.headers['x-file-name']);
+        const format = resolveUploadFormat(request.headers['content-type'], requestedFileName, hasFileName);
+        const fileName = requestedFileName || `score${path.extname(format.sourceFile)}`;
         const body = await readBody(request, MAX_UPLOAD_BYTES);
-        if (body.length < 5 || body.subarray(0, 5).toString('ascii') !== '%PDF-') {
-          return error(response, 400, 'Uploaded content is not a PDF file.');
-        }
-        const job = await store.create(safeFileName(request.headers['x-file-name']), body);
-        return json(response, 202, { id: job.id, status: job.status, message: job.message });
+        const { scoreXml } = validateUpload(format, body);
+        const job = await store.create({ fileName, format, body, scoreXml });
+        return json(response, 202, publicJob(job));
       }
       if (request.method === 'GET' && url.pathname === '/api/scores') {
         return json(response, 200, { scores: await store.listScores() });
@@ -297,7 +320,7 @@ export async function createApp({
         return json(response, 200, publicJob(job));
       }
 
-      const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(score\.musicxml|source\.pdf))?$/);
+      const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(score\.musicxml|source|source\.pdf))?$/);
       if (request.method === 'GET' && match) {
         const id = match[1];
         const job = await store.load(id);
@@ -307,7 +330,8 @@ export async function createApp({
         if (match[2] === 'score.musicxml') {
           return sendFile(response, path.join(store.directory(id), 'score.musicxml'), 'application/vnd.recordare.musicxml+xml; charset=utf-8', `${path.parse(job.fileName).name}.musicxml`);
         }
-        return sendFile(response, path.join(store.directory(id), 'source.pdf'), 'application/pdf', job.fileName);
+        if (match[2] === 'source.pdf' && sourceType(job) !== 'pdf') return error(response, 404, 'File not found.');
+        return sendFile(response, path.join(store.directory(id), sourceFile(job)), sourceMime(job), job.fileName);
       }
 
       if (url.pathname.startsWith('/api/')) return error(response, 404, 'API route not found.');

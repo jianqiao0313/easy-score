@@ -3,6 +3,7 @@ import Download from '@icon-park/svg/es/icons/DownloadOne.js';
 import Refresh from '@icon-park/svg/es/icons/Refresh.js';
 import FileMusic from '@icon-park/svg/es/icons/FileMusic.js';
 import FilePdf from '@icon-park/svg/es/icons/FilePdf.js';
+import Pic from '@icon-park/svg/es/icons/Pic.js';
 import Right from '@icon-park/svg/es/icons/Right.js';
 import Info from '@icon-park/svg/es/icons/Info.js';
 import Attention from '@icon-park/svg/es/icons/Attention.js';
@@ -26,7 +27,7 @@ function Saxophone() {
 }
 
 const icons = {
-  upload: Upload, download: Download, refresh: Refresh, score: FileMusic, pdf: FilePdf,
+  upload: Upload, download: Download, refresh: Refresh, score: FileMusic, pdf: FilePdf, image: Pic,
   right: Right, info: Info, warning: Attention, piano: Piano, music: MusicOne,
   saxophone: Saxophone, minus: Minus, plus: Plus, 'volume-low': VolumeDown, 'volume-high': VolumeUp,
   previous: GoStart, next: GoEnd, play: PlayOne, pause: Pause,

@@ -1,13 +1,13 @@
 # easy-score
 
-easy-score 是一款网页版 PDF 五线谱识别与播放器。镜像内包含 Web 应用、Audiveris 识谱引擎和本地音色，可把印刷乐谱转换为可查看、播放和导出的 MusicXML。
+easy-score 是一款网页版五线谱识别与播放器。镜像内包含 Web 应用、Audiveris 识谱引擎和本地音色，可识别 PDF、PNG、JPEG 印刷乐谱，也可直接导入 MusicXML 进行查看和播放。
 
 ## 快速启动
 
-当前稳定版本为 `1.0.1`。x86_64 / amd64 主机复制下面一行即可启动：
+当前稳定版本为 `1.0.2`。x86_64 / amd64 主机复制下面一行即可启动：
 
 ```sh
-docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.1
+docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.2
 ```
 
 启动后打开 [http://localhost:4173](http://localhost:4173)。端口绑定到 `127.0.0.1`，只允许当前主机访问；如需提供远程访问，请在可信网络中配置反向代理。
@@ -16,24 +16,25 @@ Apple Silicon 或其他 ARM 主机需在镜像名前加 `--platform linux/amd64`
 
 ## 功能
 
-- 上传印刷五线谱 PDF（最大 50 MB），通过 Audiveris 进行 OMR 识别。
-- 在服务端保存原 PDF、识别结果和乐谱历史，刷新页面或更换浏览器后仍可重新打开。
-- 使用钢琴或中音萨克斯采样音色播放识别后的乐谱。
+- 导入 PDF、PNG 或 JPEG 印刷五线谱，通过 Audiveris 进行 OMR 识别；每个文件最大 50 MB。
+- 直接导入 `.musicxml`、`.xml` 和压缩的 `.mxl`，支持常用制谱软件导出的 `score-partwise` MusicXML。
+- 在服务端保存所有成功导入的原文件、处理结果和乐谱历史，刷新页面或更换浏览器后仍可重新打开。
+- 使用钢琴或中音萨克斯采样音色播放导入后的乐谱。
 - 支持播放、暂停、跳到上一小节或下一小节、拖动进度、速度、音量和节拍器控制。
 - 支持乐谱自动排版，或固定每行显示 1–8 小节。
 - 在浏览器中保存音色和每行小节数偏好。
-- 对照原 PDF，并导出 MusicXML 继续校对。
+- 对照原 PDF 或图片，并导出 MusicXML 继续校对。
 
-OMR 可能出现错音、漏音或节奏偏差，建议始终对照原谱校验。中音萨克斯选项只改变音色，不会自动移调。
+OMR 可能出现错音、漏音或节奏偏差，建议始终对照原谱校验。MusicXML 导入不经过 OMR，目前不承诺覆盖 MusicXML 的全部格式与扩展。中音萨克斯播放已针对采样覆盖与延音进行优化；该选项只改变音色，不会自动移调。
 
 ## 数据持久化与升级
 
-容器将数据写入 `/data/jobs`。上面的命令使用名为 `easy-score-data` 的 Docker 数据卷；删除或重建容器不会删除该卷中的 PDF、识别结果和历史记录。
+容器将数据写入 `/data/jobs`。上面的命令使用名为 `easy-score-data` 的 Docker 数据卷；删除或重建容器不会删除该卷中的导入文件、识别或解析结果以及历史记录。
 
-从旧版本升级到 `1.0.1`：
+从旧版本升级到 `1.0.2`：
 
 ```sh
-docker pull jianqiao0313/easy-score:1.0.1
+docker pull jianqiao0313/easy-score:1.0.2
 docker stop easy-score
 docker rm easy-score
 ```
@@ -73,7 +74,7 @@ easy-score 自有代码与文档采用 [MIT License](https://github.com/jianqiao
 
 镜像包含 Audiveris 主项目的固定版本源码压缩包，但这不等同于已核实其全部捆绑依赖、Java 运行时及系统组件的对应源码完整性。具体来源、义务和待核实项见 [第三方许可证核查](https://github.com/jianqiao0313/easy-score/blob/main/THIRD_PARTY_NOTICES.md) 与 [npm 版本及许可证清单](https://github.com/jianqiao0313/easy-score/blob/main/docs/DEPENDENCY_LICENSES.md)。
 
-`1.0.1` 镜像在 `/usr/share/doc/easy-score/` 保存应用许可证、声明、Node 许可证及系统包版本清单，在 `/opt/tessdata/LICENSE` 保存 OCR 模型许可证；npm 许可证及音色、字形声明可通过应用的 `/third-party-licenses.txt` 和 `/asset-licenses.txt` 下载。
+`1.0.2` 镜像在 `/usr/share/doc/easy-score/` 保存应用许可证、声明、Node 许可证及系统包版本清单，在 `/opt/tessdata/LICENSE` 保存 OCR 模型许可证；npm 许可证及音色、字形声明可通过应用的 `/third-party-licenses.txt` 和 `/asset-licenses.txt` 下载。
 
 ## 项目链接
 

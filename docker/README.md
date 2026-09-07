@@ -27,6 +27,8 @@ Apple Silicon 或其他 ARM 主机需在镜像名前加 `--platform linux/amd64`
 
 OMR 可能出现错音、漏音或节奏偏差，建议始终对照原谱校验。MusicXML 导入不经过 OMR，目前不承诺覆盖 MusicXML 的全部格式与扩展。中音萨克斯播放已针对采样覆盖与延音进行优化；该选项只改变音色，不会自动移调。
 
+`latest` 在 1.0.2 发布后增加了低分辨率图片预处理：使用镜像内的 Pillow 在本地按目标 300 DPI 重采样，校正方向和透明背景；PDF 继续按 350 DPI 渲染。原文件保持不变。没有可靠 DPI 时按常见 A4 页面尺寸估算并提示，已有足够像素的图片不会盲目放大；放大最多 4.5 倍，新生成的图片识别副本受 5000 像素长边与 2000 万像素限制。原图本身超过此上限时会提示并跳过图片预处理，以原图识别，不对原图降采样。插值无法恢复已丢失的细节，不保证识别一定更准确。固定 `1.0.2` 镜像不包含这项后续改动，使用它需拉取并启动 `latest`。
+
 ## 数据持久化与升级
 
 容器将数据写入 `/data/jobs`。上面的命令使用名为 `easy-score-data` 的 Docker 数据卷；删除或重建容器不会删除该卷中的导入文件、识别或解析结果以及历史记录。
@@ -58,7 +60,7 @@ docker volume inspect easy-score-data
 | `AUDIVERIS_BIN` | `/opt/audiveris/bin/Audiveris` | Audiveris 可执行文件路径 |
 | `TESSDATA_PREFIX` | `/opt/tessdata` | Tesseract 英文 OCR 模型目录 |
 | `POPPLER_BIN` | `/usr/bin/pdftoppm` | PDF 页面渲染程序路径 |
-| `PYTHON_BIN` | `/usr/bin/python3` | 多页图像处理使用的 Python 路径 |
+| `PYTHON_BIN` | `/usr/bin/python3` | 图片 DPI 预处理和多页图像处理使用的 Python/Pillow 路径 |
 
 通常只需调整 `OMR_TIMEOUT_MS`。如需传入环境变量，可在 `docker run` 中增加例如 `-e OMR_TIMEOUT_MS=900000`。
 

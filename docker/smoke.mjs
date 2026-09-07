@@ -279,7 +279,13 @@ try {
     const imageId = await uploadForRecognition(baseUrl, png, {
       fileName: 'docker-smoke.png', sourceType: 'image', sourceMime: 'image/png',
     });
-    imageOmr = `passed (job ${imageId})`;
+    const preprocessing = JSON.parse(docker('exec', name, 'cat', `/data/jobs/${imageId}/preprocess.json`));
+    if (!preprocessing.resized || !preprocessing.sourceDpi?.every((dpi) => dpi > 199 && dpi < 201)
+      || !preprocessing.outputDpi?.every((dpi) => dpi >= 300)
+      || !preprocessing.outputSize?.every((size, index) => size > preprocessing.sourceSize[index])) {
+      throw new Error(`low-DPI image did not undergo real pixel resampling: ${JSON.stringify(preprocessing)}`);
+    }
+    imageOmr = `passed (200 → 300 DPI resampling; job ${imageId})`;
   }
   console.log(JSON.stringify({
     image,

@@ -30,7 +30,11 @@ jobs:
           cache: npm
 
       - name: Install and test
+        env:
+          PYTHON_BIN: /usr/bin/python3
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-pil
           npm ci
           node scripts/license-report.mjs --check
           npm test

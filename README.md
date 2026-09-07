@@ -52,6 +52,8 @@ docker compose up -d --build
 
 PDF 与图片识别在你部署的服务器上运行。OMR 可能产生错音、漏音和节奏错误，清晰的印刷谱效果更好；手写谱和复杂排版可能无法正确识别。MusicXML 导入不经过 OMR，目前面向常用制谱软件导出的 `score-partwise` 文档，不承诺覆盖 MusicXML 的全部格式与扩展。中音萨克斯选项只改变音色，不会自动移调。音色采样随应用提供，加载失败时会提示并使用合成音色。
 
+`main` / `latest` 的识谱预处理：PDF 使用 Poppler 按 350 DPI 渲染，已经高于 300 DPI；低分辨率图片使用本地 Pillow 的 Lanczos 重采样生成 300 DPI 识别副本，同时校正图片方向、将透明背景转为白底。原文件仍完整保留。缺少可靠 DPI 时按 A4 300 DPI 的约 3508 像素长边估算，并给出提示；已有足够像素的图片不会盲目放大。放大最多 4.5 倍，新生成的图片识别副本受 5000 像素长边和 2000 万像素限制；原图本身超过此上限时会跳过图片预处理、提示并使用原图识别，不对原图降采样。插值只能改善输入尺度，不能恢复原图丢失的细节，也不保证每份谱子的准确率都会提高。此功能在 1.0.2 发布后加入，固定 `1.0.2` 镜像不包含此改动。
+
 ## 本地开发
 
 需要 Node.js 22.12 或更高版本，建议使用 Node.js 24。
@@ -71,7 +73,7 @@ PDF 与图片识别还需要 Audiveris。Apple Silicon macOS 可以运行：
 
 脚本将 Audiveris 及英文 OCR 模型安装到 `.local/omr`，Audiveris 自带 Java。其他平台可自行安装 Audiveris，通过 `AUDIVERIS_BIN` 和 `TESSDATA_PREFIX` 指定路径，或使用 Docker。
 
-安装 Poppler（`pdftoppm`）、Python 3 和 Pillow 可启用 350 DPI PDF 预处理及多页 TIFF 转换；缺少这些工具时会回退到 Audiveris 原生 PDF 处理。
+安装 Poppler（`pdftoppm`）、Python 3 和 Pillow 可启用 350 DPI PDF 渲染、300 DPI 图片预处理及多页 TIFF 转换。Docker 已包含这些工具；本地可用 `python3 -m pip install Pillow` 安装 Pillow，或使用系统包管理器。`PYTHON_BIN` 应指向安装了 Pillow 的 Python；自动化测试也需要此依赖。缺少工具或预处理失败时会提示，并回退到原图识别或 Audiveris 原生 300 DPI PDF 处理。
 
 ```sh
 npm test          # 自动化测试

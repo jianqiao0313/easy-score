@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -577,27 +578,39 @@ test('MXL extraction rejects malformed container XML and the wrong container hie
   );
 });
 
-test('Audiveris image conversion passes the stored image directly without PDF preprocessing', async (t) => {
+test('Audiveris receives a resampled 300 DPI image and preserves the original source', async (t) => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'score-player-engine-'));
   t.after(() => rm(temporary, { recursive: true, force: true }));
   const executable = path.join(temporary, 'fake-audiveris');
   const inputPath = path.join(temporary, 'source.png');
   const outputDir = path.join(temporary, 'output');
   await mkdir(outputDir);
-  await writeFile(inputPath, TEST_PNG);
+  const image = spawnSync(process.env.PYTHON_BIN || 'python3', ['-c',
+    'from PIL import Image; import sys; Image.new("RGB", (400, 600), "white").save(sys.argv[1], dpi=(150,150))', inputPath]);
+  assert.equal(image.status, 0, image.stderr?.toString());
+  const original = await readFile(inputPath);
   await writeFile(`${inputPath}.mxl`, zipSync({
     'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>'),
     'score.musicxml': strToU8(PLAYABLE_XML),
   }));
   await writeFile(executable, `#!/bin/sh
 printf '%s' "$7" > "$5/recognition-input.txt"
-cp "$7.mxl" "$5/result.mxl"
+cp "$5/../source.png.mxl" "$5/result.mxl"
 `);
   await chmod(executable, 0o755);
 
   const engine = createAudiverisEngine({ executable });
   const result = await engine.convert({ inputPath, outputDir, sourceType: 'image' });
-  assert.equal(await readFile(path.join(outputDir, 'recognition-input.txt'), 'utf8'), inputPath);
+  const recognitionInput = await readFile(path.join(outputDir, 'recognition-input.txt'), 'utf8');
+  assert.notEqual(recognitionInput, inputPath);
+  assert.match(recognitionInput, /\.render-.*[/\\]score\.png$/);
+  const preprocessing = JSON.parse(await readFile(path.join(outputDir, 'preprocess.json'), 'utf8'));
+  assert.deepEqual(preprocessing.sourceSize, [400, 600]);
+  assert.deepEqual(preprocessing.outputSize, [800, 1200]);
+  assert.deepEqual(preprocessing.outputDpi, [300, 300]);
+  assert.equal(preprocessing.resized, true);
+  assert.deepEqual(await readFile(inputPath), original);
+  assert.equal((await readdir(outputDir)).some((name) => name.startsWith('.render-')), false);
   assert.match(result.xml, /<score-partwise/);
   assert.match(result.xml, /<note>/);
   assert.deepEqual(result.warnings, []);
@@ -612,6 +625,7 @@ cp "$7.mxl" "$5/result.mxl"
     noOutput.convert({ inputPath, outputDir: emptyOutputDir, sourceType: 'image' }),
     (error) => /图片完整且包含清晰的五线谱/.test(error.publicMessage),
   );
+  assert.equal((await readdir(emptyOutputDir)).some((name) => name.startsWith('.render-')), false);
 
   await writeFile(`${inputPath}.mxl`, zipSync({
     'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>'),
@@ -623,4 +637,38 @@ cp "$7.mxl" "$5/result.mxl"
     engine.convert({ inputPath, outputDir: invalidOutputDir, sourceType: 'image' }),
     (error) => /没有生成包含可播放音符的有效乐谱/.test(error.publicMessage),
   );
+});
+
+test('missing image preprocessing tools falls back explicitly without losing the source', async (t) => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'score-player-preprocess-'));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const executable = path.join(temporary, 'fake-audiveris');
+  const inputPath = path.join(temporary, 'source.png');
+  const outputDir = path.join(temporary, 'output');
+  await mkdir(outputDir);
+  await writeFile(inputPath, TEST_PNG);
+  await writeFile(path.join(temporary, 'fixture.mxl'), zipSync({
+    'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="score.musicxml"/></rootfiles></container>'),
+    'score.musicxml': strToU8(PLAYABLE_XML),
+  }));
+  await writeFile(executable, `#!/bin/sh
+printf '%s' "$7" > "$5/recognition-input.txt"
+cp "$5/../fixture.mxl" "$5/result.mxl"
+`);
+  await chmod(executable, 0o755);
+  const engine = createAudiverisEngine({ executable, pythonExecutable: path.join(temporary, 'missing-python') });
+  const result = await engine.convert({ inputPath, outputDir, sourceType: 'image' });
+  assert.equal(await readFile(path.join(outputDir, 'recognition-input.txt'), 'utf8'), inputPath);
+  assert.ok(result.warnings.some((warning) => /300 DPI.*原图/.test(warning)));
+
+  const failingPython = path.join(temporary, 'failing-python');
+  await writeFile(failingPython, '#!/bin/sh\nprintf "Pillow unavailable\\n" >&2\nexit 1\n');
+  await chmod(failingPython, 0o755);
+  const failedOutput = path.join(temporary, 'failed-output');
+  await mkdir(failedOutput);
+  const failedPreparation = await createAudiverisEngine({ executable, pythonExecutable: failingPython })
+    .convert({ inputPath, outputDir: failedOutput, sourceType: 'image' });
+  assert.ok(failedPreparation.warnings.some((warning) => /预处理失败.*原图/.test(warning)));
+  assert.match(await readFile(path.join(failedOutput, 'preprocess.log'), 'utf8'), /Pillow unavailable/);
+  assert.equal((await readdir(failedOutput)).some((name) => name.startsWith('.render-')), false);
 });

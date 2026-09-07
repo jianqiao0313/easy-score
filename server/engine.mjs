@@ -1,4 +1,4 @@
-import { access, appendFile, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { access, appendFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -70,7 +70,7 @@ function runProcess(executable, args, { cwd, env, timeoutMs, onOutput = () => {}
   });
 }
 
-async function preparePdfInput({ inputPath, outputDir, timeoutMs, onProgress }) {
+async function preparePdfInput({ inputPath, outputDir, timeoutMs, onProgress, pythonExecutable }) {
   const warnings = [];
   const renderer = await executableOnPath(process.env.POPPLER_BIN || 'pdftoppm');
   if (!renderer) {
@@ -101,7 +101,7 @@ async function preparePdfInput({ inputPath, outputDir, timeoutMs, onProgress }) 
       await cleanup();
       return { recognitionInput: inputPath, warnings, cleanup: async () => {} };
     }
-    const python = await executableOnPath(process.env.PYTHON_BIN || 'python3');
+    const python = await executableOnPath(pythonExecutable);
     if (!python) {
       warnings.push('未检测到 Python/Pillow，已使用 Audiveris 原生 300 DPI 多页处理。');
       await cleanup();
@@ -123,6 +123,42 @@ async function preparePdfInput({ inputPath, outputDir, timeoutMs, onProgress }) 
     warnings.push(`${PDF_RENDER_DPI} DPI PDF 预处理失败，已使用 Audiveris 原生 300 DPI 渲染；详细信息已保存到任务日志。`);
     await cleanup();
     return { recognitionInput: inputPath, warnings, cleanup: async () => {} };
+  }
+}
+
+async function prepareImageInput({ inputPath, outputDir, timeoutMs, onProgress, pythonExecutable }) {
+  const python = await executableOnPath(pythonExecutable);
+  if (!python) {
+    return {
+      recognitionInput: inputPath,
+      warnings: ['未检测到 Python/Pillow，无法进行 300 DPI 图片预处理，已使用原图识别。'],
+      cleanup: async () => {},
+    };
+  }
+  const renderDirectory = await mkdtemp(path.join(outputDir, '.render-'));
+  const cleanup = () => rm(renderDirectory, { recursive: true, force: true });
+  const recognitionInput = path.join(renderDirectory, 'score.png');
+  const output = [];
+  try {
+    onProgress(12, '正在本地预处理图片（目标 300 DPI）');
+    await runProcess(python, [path.resolve('server/prepare_image.py'), inputPath, recognitionInput], {
+      cwd: outputDir,
+      env: process.env,
+      timeoutMs,
+      onOutput: (chunk) => output.push(chunk.toString()),
+    });
+    const report = JSON.parse(output.join(''));
+    await access(recognitionInput);
+    await writeFile(path.join(outputDir, 'preprocess.json'), JSON.stringify(report, null, 2));
+    return { recognitionInput, warnings: report.warnings || [], cleanup };
+  } catch (cause) {
+    await cleanup();
+    await appendFile(path.join(outputDir, 'preprocess.log'), `${output.join('')}\n${cause.stack || cause}\n`);
+    return {
+      recognitionInput: inputPath,
+      warnings: ['300 DPI 图片预处理失败，已使用原图识别；详细信息已保存到任务日志。'],
+      cleanup: async () => {},
+    };
   }
 }
 
@@ -150,6 +186,7 @@ export function createAudiverisEngine({
   executable = process.env.AUDIVERIS_BIN || DEFAULT_ENGINE_PATH,
   tessdataDirectory = process.env.TESSDATA_PREFIX || path.resolve('.local/omr/tessdata'),
   timeoutMs = Number(process.env.OMR_TIMEOUT_MS) || 10 * 60_000,
+  pythonExecutable = process.env.PYTHON_BIN || 'python3',
 } = {}) {
   return {
     name: 'Audiveris',
@@ -176,8 +213,8 @@ export function createAudiverisEngine({
       if (!health.available) throw new Error(health.message);
 
       const prepared = sourceType === 'pdf'
-        ? await preparePdfInput({ inputPath, outputDir, timeoutMs, onProgress })
-        : { recognitionInput: inputPath, warnings: [], cleanup: async () => {} };
+        ? await preparePdfInput({ inputPath, outputDir, timeoutMs, onProgress, pythonExecutable })
+        : await prepareImageInput({ inputPath, outputDir, timeoutMs, onProgress, pythonExecutable });
       const args = ['-batch', '-transcribe', '-export', '-output', outputDir, '--', prepared.recognitionInput];
 
       let progress = 12;

@@ -103,4 +103,12 @@ node scripts/verify-live.mjs /path/to/score.pdf
 
 推送到 `main` 后，[GitHub Actions](https://github.com/jianqiao0313/easy-score/actions) 自动测试、构建并验证容器，再发布 `latest` 和 `sha-完整提交号` 镜像。版本标签 `v1.2.3` 会发布 `1.2.3` 和 `1.2` 标签；Pull Request 只验证，不发布。Fork 后若需发布到自己的 Docker Hub，请配置仓库变量 `DOCKERHUB_USERNAME` 和 Secret `DOCKERHUB_TOKEN`。
 
-第三方组件来源与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+## 开源协议与第三方组件
+
+easy-score 自有代码与文档采用 [MIT License](LICENSE)，允许使用、修改、分发和商业使用，分发时需保留版权声明与许可证。此授权不替代第三方代码、音色、字体及用户上传乐谱各自的许可证，也不表示整个 Docker 镜像都是 MIT。
+
+第三方依赖并非全部为 MIT：OpenSheetMusicDisplay 2.1.2 为 BSD-3-Clause；Audiveris 5.11.0 为 AGPL-3.0；镜像中的 Poppler 使用 GPL；音色预渲染发行层使用 CC BY 3.0 US，原始 Fluid SoundFont 使用 MIT，需保留相应署名和许可。JSZip 3.10.1 提供 MIT / GPL 双许可，本项目选择 MIT；Pako 1.0.11 需同时遵守 MIT 与 Zlib。
+
+具体版本、商业使用与再分发要求、尚需核实的镜像源码范围，见 [第三方许可证核查](THIRD_PARTY_NOTICES.md)；所有 npm 锁定依赖见 [版本与许可证清单](docs/DEPENDENCY_LICENSES.md)。应用随附 [npm 许可证正文](public/third-party-licenses.txt) 与 [音色及字形声明](public/asset-licenses.txt)，构建后可通过 `/third-party-licenses.txt` 与 `/asset-licenses.txt` 获取。
+
+升级依赖后执行 `node scripts/license-report.mjs` 更新清单，并人工复核许可变化；CI 用 `node scripts/license-report.mjs --check` 检查清单是否与锁文件一致。清单检查不能替代对捆绑代码、音色和镜像系统组件的核查。

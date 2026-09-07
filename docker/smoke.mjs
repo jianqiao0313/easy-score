@@ -95,13 +95,35 @@ try {
   if (!page.ok || !(await page.text()).includes('<html')) {
     throw new Error('production web page was not served');
   }
+  docker('exec', name, 'node', '--input-type=module', '-e', `
+    import { readFileSync } from 'node:fs';
+    for (const file of [
+      '/usr/share/doc/easy-score/LICENSE',
+      '/usr/share/doc/easy-score/THIRD_PARTY_NOTICES.md',
+      '/usr/share/doc/easy-score/NODE_LICENSE',
+      '/usr/share/doc/easy-score/debian-packages.tsv',
+      '/opt/tessdata/LICENSE',
+    ]) {
+      if (!readFileSync(file, 'utf8').trim()) throw new Error('Missing license record: ' + file);
+    }
+  `);
+  for (const [file, names] of [
+    ['third-party-licenses.txt', ['PhonicScore', 'Jean-loup Gailly']],
+    ['asset-licenses.txt', ['Frank Wen', 'Creative Commons Attribution 3.0 US']],
+  ]) {
+    const licenses = await fetch(`${baseUrl}/${file}`);
+    const licenseText = await licenses.text();
+    if (!licenses.ok || names.some((author) => !licenseText.includes(author))) {
+      throw new Error(`third-party license notices were not served: ${file}`);
+    }
+  }
 
   let omr = 'skipped (set EASY_SCORE_SMOKE_PDF to run a real recognition job)';
   if (process.env.EASY_SCORE_SMOKE_PDF) {
     const id = await recognizePdf(baseUrl, process.env.EASY_SCORE_SMOKE_PDF);
     omr = `passed (job ${id})`;
   }
-  console.log(JSON.stringify({ image, audiveris: '5.11.0', health: 'passed', web: 'passed', omr }, null, 2));
+  console.log(JSON.stringify({ image, audiveris: '5.11.0', health: 'passed', web: 'passed', licenses: 'passed', omr }, null, 2));
 } finally {
   if (started) spawnSync('docker', ['rm', '--force', name], { stdio: 'ignore', timeout: 15_000 });
 }

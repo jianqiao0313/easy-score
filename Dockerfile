@@ -26,6 +26,7 @@ ARG AUDIVERIS_SOURCE_COMMIT=9e1e55cd2746037d059345881c53e6a6754bffbd
 ARG AUDIVERIS_SOURCE_SHA256=b58133b8dabca7aa4e0f43e6286fd667bf06817f5c95115a1b3134add952eae5
 ARG TESSDATA_COMMIT=ced78752cc61322fb554c280d13360b35b8684e4
 ARG TESSDATA_ENG_SHA256=daa0c97d651c19fba3b25e81317cd697e9908c8208090c94c3905381c23fc047
+ARG TESSDATA_LICENSE_SHA256=cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
 
 ENV DEBIAN_FRONTEND=noninteractive \
     NODE_ENV=production \
@@ -68,6 +69,9 @@ RUN test "$TARGETARCH" = amd64 \
     && curl -fsSL --retry 3 -o /opt/tessdata/eng.traineddata \
        "https://raw.githubusercontent.com/tesseract-ocr/tessdata/${TESSDATA_COMMIT}/eng.traineddata" \
     && echo "${TESSDATA_ENG_SHA256}  /opt/tessdata/eng.traineddata" | sha256sum -c - \
+    && curl -fsSL --retry 3 -o /opt/tessdata/LICENSE \
+       "https://raw.githubusercontent.com/tesseract-ocr/tessdata/${TESSDATA_COMMIT}/LICENSE" \
+    && echo "${TESSDATA_LICENSE_SHA256}  /opt/tessdata/LICENSE" | sha256sum -c - \
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
     && locale-gen \
     && rm -f /tmp/audiveris.deb \
@@ -81,10 +85,15 @@ COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY server ./server
+COPY LICENSE /usr/share/doc/easy-score/LICENSE
 COPY THIRD_PARTY_NOTICES.md /usr/share/doc/easy-score/THIRD_PARTY_NOTICES.md
 COPY docker/AUDIVERIS.md /usr/share/doc/easy-score/AUDIVERIS.md
 
-RUN groupadd --system --gid 10001 easyscore \
+RUN test -s /usr/local/LICENSE \
+    && cp /usr/local/LICENSE /usr/share/doc/easy-score/NODE_LICENSE \
+    && dpkg-query -W -f='${binary:Package}\t${Version}\t${source:Package}\t${source:Version}\n' \
+       > /usr/share/doc/easy-score/debian-packages.tsv \
+    && groupadd --system --gid 10001 easyscore \
     && useradd --system --uid 10001 --gid easyscore --create-home easyscore \
     && mkdir -p /data/jobs /data/demo \
     && chown -R easyscore:easyscore /data /home/easyscore

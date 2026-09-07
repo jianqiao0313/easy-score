@@ -32,6 +32,7 @@ jobs:
       - name: Install and test
         run: |
           npm ci
+          node scripts/license-report.mjs --check
           npm test
 
       - name: Set up Docker Buildx

@@ -1,0 +1,62 @@
+easy-score — Instrument sample notices
+
+The piano.json and saxophone.json files contain acoustic grand piano and
+alto saxophone MP3 samples from the FluidR3_GM MIDI.js Soundfonts distribution.
+
+Original Fluid (R3) SoundFont: Frank Wen.
+Original license source: https://github.com/pianobooster/fluid-soundfont/blob/master/COPYING
+The original copyright and MIT permission notice are reproduced below.
+
+Rendered sample distribution: Benjamin Gleitzman and MIDI.js Soundfonts contributors.
+https://github.com/gleitz/midi-js-soundfonts
+Distribution license as stated by its README: Creative Commons Attribution 3.0 US.
+https://creativecommons.org/licenses/by/3.0/us/
+https://creativecommons.org/licenses/by/3.0/us/legalcode.en
+
+Sources:
+https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/acoustic_grand_piano-mp3.js
+https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/alto_sax-mp3.js
+
+Changes by easy-score: removed the JavaScript variable wrapper and serialized
+the sample mappings as JSON. The sample audio bytes were not changed.
+These third-party assets are not relicensed by easy-score's MIT declaration.
+
+Original Fluid SoundFont license:
+
+Copyright (c) 2000-2002, 2008 Frank Wen <getfrank@gmail.com>
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+
+VexFlow 1.2.93 — Gonville glyph metadata
+
+Source files: src/fonts/gonville_all.js and src/fonts/gonville_original.js
+https://github.com/0xfe/vexflow/blob/1.2.93/src/fonts/gonville_all.js
+Original font name: Gonville-18
+Original font version: Version 0.1.8904
+Original copyright field: No copyright is claimed on this font file.
+Original unique identifier: FontForge 2.0 : Gonville-18 : 17-3-2010
+The original license_url and license_description fields are empty.
+
+This reproduces the metadata supplied with those two files; it is not a new
+license grant, and is not a claim about all fonts in the dependency bundle.
+The VexFlow code MIT notice is included in /third-party-licenses.txt.

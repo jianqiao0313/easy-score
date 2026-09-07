@@ -56,6 +56,19 @@ docker volume inspect easy-score-data
 
 通常只需调整 `OMR_TIMEOUT_MS`。如需传入环境变量，可在 `docker run` 中增加例如 `-e OMR_TIMEOUT_MS=900000`。
 
+## 开源协议与第三方组件
+
+easy-score 自有代码与文档采用 [MIT License](https://github.com/jianqiao0313/easy-score/blob/main/LICENSE)，允许使用、修改、分发和商业使用；分发时需保留版权声明与许可证。第三方组件、音色、字体和用户上传的乐谱仍遵循各自的许可，整个 Docker 镜像并非统一采用 MIT。
+
+- OpenSheetMusicDisplay 2.1.2：BSD-3-Clause，分发时保留版权、许可和免责声明，不得暗示上游背书。
+- Audiveris 5.11.0：AGPL-3.0；Poppler：GPL。再分发相关二进制时需履行对应源码等义务；修改 AGPL 程序并向网络用户提供服务时，还需关注其源码提供要求。
+- JSZip 3.10.1：本项目选择双许可中的 MIT；Pako 1.0.11：MIT 与 Zlib 均需遵守。
+- 钢琴、中音萨克斯音色：预渲染发行层为 CC BY 3.0 US，原始 Fluid SoundFont 为 MIT；保留署名、许可链接和 JSON 转换说明。记谱字体的独立许可见下方核查文档。
+
+镜像包含 Audiveris 主项目的固定版本源码压缩包，但这不等同于已核实其全部捆绑依赖、Java 运行时及系统组件的对应源码完整性。具体来源、义务和待核实项见 [第三方许可证核查](https://github.com/jianqiao0313/easy-score/blob/main/THIRD_PARTY_NOTICES.md) 与 [npm 版本及许可证清单](https://github.com/jianqiao0313/easy-score/blob/main/docs/DEPENDENCY_LICENSES.md)。
+
+MIT 文件及第三方声明补充于 `1.0.0` 发布后的 `main` 构建。包含本次补充的镜像会在 `/usr/share/doc/easy-score/` 保存应用许可证、声明、Node 许可证及系统包版本清单，在 `/opt/tessdata/LICENSE` 保存 OCR 模型许可证；npm 许可证正文可通过应用的 `/third-party-licenses.txt` 下载。已发布的 `1.0.0` 镜像未重新打包。
+
 ## 项目链接
 
 - [GitHub 源码](https://github.com/jianqiao0313/easy-score)

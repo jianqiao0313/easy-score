@@ -56,6 +56,7 @@ RUN test "$TARGETARCH" = amd64 \
     && curl -fsSL --retry 3 -o /tmp/audiveris.deb \
        "https://github.com/Audiveris/audiveris/releases/download/${AUDIVERIS_VERSION}/Audiveris-${AUDIVERIS_VERSION}-ubuntu24.04-x86_64.deb" \
     && echo "${AUDIVERIS_SHA256}  /tmp/audiveris.deb" | sha256sum -c - \
+    && mkdir -p /usr/share/applications /usr/share/desktop-directories \
     && apt-get install -y --no-install-recommends /tmp/audiveris.deb \
     && mkdir -p /usr/share/source/audiveris \
     && curl -fsSL --retry 3 -o /usr/share/source/audiveris/audiveris-${AUDIVERIS_VERSION}.tar.gz \

@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { parseMusicXML } from '../src/musicxml.mjs';
 
 const image = process.argv[2] || 'easy-score:local';
 const name = `easy-score-smoke-${process.pid}`;
@@ -52,6 +53,15 @@ async function recognizePdf(baseUrl, pdfPath) {
       const xml = await score.text();
       if (!score.ok || !xml.includes('<score-partwise')) {
         throw new Error('OMR job did not return a valid MusicXML score.');
+      }
+      const parsed = parseMusicXML(xml);
+      if (parsed.notes.length === 0 || parsed.totalBeats <= 0) {
+        throw new Error('OMR job returned MusicXML without playable notes.');
+      }
+      const source = await fetch(`${baseUrl}/api/jobs/${id}/source.pdf`);
+      const returnedPdf = Buffer.from(await source.arrayBuffer());
+      if (!source.ok || !returnedPdf.equals(pdf)) {
+        throw new Error('OMR job did not preserve the uploaded PDF bytes.');
       }
       return id;
     }

@@ -37,6 +37,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHON_BIN=/usr/bin/python3 \
     TESSDATA_PREFIX=/opt/tessdata \
     HOME=/home/easyscore \
+    GDK_SCALE=1 \
     LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8
 

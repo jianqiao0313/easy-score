@@ -134,6 +134,26 @@ export class ScorePlayer {
     this._onPosition(target);
   }
 
+  previousMeasure() {
+    const totalBeats = this._score?.totalBeats || 0;
+    const measureStarts = [...new Set((this._score?.measures || [])
+      .map(({ startBeat }) => Number(startBeat))
+      .filter((startBeat) => Number.isFinite(startBeat) && startBeat >= 0 && startBeat <= totalBeats))]
+      .sort((left, right) => left - right);
+    if (measureStarts[0] !== 0) measureStarts.unshift(0);
+
+    const beat = this.currentBeat;
+    let currentMeasureIndex = 0;
+    for (let index = 1; index < measureStarts.length; index += 1) {
+      if (measureStarts[index] > beat) break;
+      currentMeasureIndex = index;
+    }
+
+    const target = measureStarts[Math.max(0, currentMeasureIndex - 1)] || 0;
+    this.seek(target);
+    return target;
+  }
+
   setTempo(bpm) {
     const nextTempo = Number(bpm);
     if (!Number.isFinite(nextTempo) || nextTempo <= 0) throw new RangeError('速度必须是大于 0 的数值。');

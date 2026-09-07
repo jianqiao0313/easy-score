@@ -4,7 +4,7 @@
 
 ## 核查范围与结论
 
-**依赖并非全部采用 MIT。** 本次检查了 `package-lock.json` 的全部 143 个依赖条目（含开发、可选和不同平台包），核对主要运行依赖的实际许可证文件，并检查 Dockerfile 指定的识谱引擎、OCR 模型、音色和运行时来源。完整 npm 元数据清单见 [DEPENDENCY_LICENSES.md](docs/DEPENDENCY_LICENSES.md)。该清单不是整个镜像的完整 SBOM，也不能证明包内每个嵌入资源均遵循 package.json 的单一许可证标记。
+**依赖并非全部采用 MIT。** 本次检查了 `package-lock.json` 的全部 144 个依赖条目（含开发、可选和不同平台包），核对主要运行依赖的实际许可证文件，并检查 Dockerfile 指定的识谱引擎、OCR 模型、音色和运行时来源。完整 npm 元数据清单见 [DEPENDENCY_LICENSES.md](docs/DEPENDENCY_LICENSES.md)。该清单不是整个镜像的完整 SBOM，也不能证明包内每个嵌入资源均遵循 package.json 的单一许可证标记。
 
 没有在已核对的 npm 许可证条款中发现需要购买商业版、按用户数付费、限制个人使用或限制应用版本的条件。MIT、BSD、ISC、Apache、Zlib 等仍有声明保留等要求；AGPL/GPL 的源码义务不能以商业使用许可替代。升级到其他版本时应重新核对，不将当前结论外推到未来版本或上游另外提供的商业产品。
 
@@ -17,6 +17,7 @@
 | [OpenSheetMusicDisplay](https://github.com/opensheetmusicdisplay/opensheetmusicdisplay/blob/2.1.2/LICENSE) | 2.1.2 | BSD-3-Clause | 保留 PhonicScore 版权、许可条件与免责声明；二进制分发也需随附；不得暗示上游背书。 |
 | [@xmldom/xmldom](https://github.com/xmldom/xmldom/blob/0.8.15/LICENSE) | 0.8.15 | MIT | 保留版权和许可。 |
 | [fflate](https://github.com/101arrowz/fflate/blob/v0.8.3/LICENSE) | 0.8.3 | MIT | 保留版权和许可。 |
+| [IconPark SVG](https://github.com/bytedance/IconPark/blob/bed2e8d1e451ffc66cbc4def3ba54fcc1f318d9e/packages/svg/LICENSE) | 1.4.2 | Apache-2.0 | 页面按钮按需使用官方 SVG 图标；保留完整许可和版权声明。包内未附单独 NOTICE，SVG 路径未修改，仅配置颜色、尺寸与描边。 |
 | VexFlow | 1.2.93 | MIT（代码） | 保留版权和许可；嵌入记谱字体需独立核对。 |
 | [JSZip](https://github.com/Stuk/jszip/blob/v3.10.1/LICENSE.markdown) | 3.10.1 | MIT OR GPL-3.0-or-later | 本项目选择 MIT；不是必须同时遵守 GPL。 |
 | [Pako](https://github.com/nodeca/pako/blob/1.0.11/lib/zlib/README) | 1.0.11 | MIT AND Zlib | 两者同时适用。保留声明，不歪曲来源，修改过的源码需明确标注。 |

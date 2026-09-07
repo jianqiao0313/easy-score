@@ -4,6 +4,7 @@ import { ScorePlayer } from './audio.mjs';
 import { syncCursorToBeat } from './cursor.mjs';
 import { loadPreferences, saveInstrument, saveMeasuresPerRow } from './preferences.mjs';
 import { markMeasureRowEnds, musicXmlWithSystemBreaks } from './score-layout.mjs';
+import { renderIcon, renderIcons } from './icons.js';
 import './style.css';
 
 const $ = (selector) => document.querySelector(selector);
@@ -20,9 +21,12 @@ const ui = {
   warningDetails: $('#warningDetails'), warningList: $('#warningList'),
   instrumentGroup: $('#instrumentGroup'), tempoInput: $('#tempoInput'), tempoRange: $('#tempoRange'), tempoDown: $('#tempoDown'), tempoUp: $('#tempoUp'), tempoMark: $('#tempoMark'),
   metronomeToggle: $('#metronomeToggle'), volumeRange: $('#volumeRange'), volumeValue: $('#volumeValue'), practiceTip: $('#practiceTip'), playButton: $('#playButton'),
-  stopButton: $('#stopButton'), forwardButton: $('#forwardButton'), seekRange: $('#seekRange'), currentTime: $('#currentTime'), totalTime: $('#totalTime'),
+  previousButton: $('#previousButton'), forwardButton: $('#forwardButton'), seekRange: $('#seekRange'), currentTime: $('#currentTime'), totalTime: $('#totalTime'),
   currentMeasure: $('#currentMeasure'), totalMeasures: $('#totalMeasures'), nowPlayingTitle: $('#nowPlayingTitle'), nowPlayingDetail: $('#nowPlayingDetail'),
 };
+
+renderIcons(document);
+renderIcons(ui.historyItemTemplate.content);
 
 let osmd;
 let score;
@@ -47,7 +51,7 @@ const player = new ScorePlayer({
   },
   onStatus: ({ soundMode, message }) => {
     updateSoundSourceLabel(false, soundMode);
-    if (message && soundMode === 'synthesized') setPracticeTip('音源提示', message, '!');
+    if (message && soundMode === 'synthesized') setPracticeTip('音源提示', message, 'warning');
   },
 });
 
@@ -386,10 +390,10 @@ function populateScore(job) {
   }));
   ui.warningDetails.hidden = warnings.length === 0;
   ui.warningDetails.open = warnings.length > 0;
-  setPracticeTip('识别提示', warnings[0] || 'OMR 可能有误差，请与原谱对照练习。', '♩');
+  setPracticeTip('识别提示', warnings[0] || 'OMR 可能有误差，请与原谱对照练习。');
   ui.scoreMeta.hidden = false;
   ui.exportButton.disabled = false;
-  [ui.playButton, ui.stopButton, ui.forwardButton, ui.seekRange].forEach((element) => { element.disabled = false; });
+  [ui.playButton, ui.previousButton, ui.forwardButton, ui.seekRange].forEach((element) => { element.disabled = false; });
   ui.totalMeasures.textContent = `/ ${score.measures?.length || '—'}`;
   setTempo(bpm);
   updatePlayback(0);
@@ -407,7 +411,7 @@ function resetLoadedState() {
   ui.scoreMeta.hidden = true;
   ui.warningDetails.hidden = true;
   ui.exportButton.disabled = true;
-  [ui.playButton, ui.stopButton, ui.forwardButton, ui.seekRange].forEach((element) => { element.disabled = true; });
+  [ui.playButton, ui.previousButton, ui.forwardButton, ui.seekRange].forEach((element) => { element.disabled = true; });
   setPlaying(false);
 }
 
@@ -420,8 +424,9 @@ function releaseOsmd() {
 
 function setPlaying(playing) {
   ui.playButton.classList.toggle('is-playing', playing);
-  ui.playButton.querySelector('span').textContent = playing ? 'Ⅱ' : '▶';
+  renderIcon(ui.playButton.querySelector('[data-icon]'), playing ? 'pause' : 'play');
   ui.playButton.setAttribute('aria-label', playing ? '暂停' : '播放');
+  ui.playButton.title = playing ? '暂停' : '播放';
   updateCursorFollowing();
 }
 
@@ -475,11 +480,10 @@ function updateSoundSourceLabel(loading = false, reportedMode = '') {
   else ui.soundSource.textContent = score ? '音源状态未知' : '等待乐谱';
 }
 
-function setPracticeTip(title, message, symbol = '♩') {
+function setPracticeTip(title, message, iconName = 'info') {
   ui.practiceTip.replaceChildren();
   const icon = document.createElement('span');
-  icon.setAttribute('aria-hidden', 'true');
-  icon.textContent = symbol;
+  renderIcon(icon, iconName);
   const copy = document.createElement('p');
   const heading = document.createElement('strong');
   heading.textContent = title;
@@ -499,7 +503,7 @@ async function selectInstrument(button) {
     updateSoundSourceLabel();
   } catch (error) {
     ui.soundSource.textContent = `音色加载失败`;
-    setPracticeTip('音色未切换', error.message || '请稍后重试。', '!');
+    setPracticeTip('音色未切换', error.message || '请稍后重试。', 'warning');
   } finally {
     buttons.forEach((item) => { item.disabled = false; });
   }
@@ -522,7 +526,7 @@ async function changeMeasuresPerRow() {
     setTab(tab);
     ui.dropZone.scrollTo(scrollLeft, scrollTop);
   } catch (error) {
-    setPracticeTip('排版未更新', error.message || '请稍后重试。', '!');
+    setPracticeTip('排版未更新', error.message || '请稍后重试。', 'warning');
   } finally {
     if (request === layoutRenderRequest) ui.measuresPerRow.disabled = false;
   }
@@ -572,7 +576,11 @@ ui.playButton.addEventListener('click', async () => {
     showError(`播放失败：${error.message}`, null);
   }
 });
-ui.stopButton.addEventListener('click', () => { player.stop(); setPlaying(false); updatePlayback(0); });
+ui.previousButton.addEventListener('click', () => {
+  if (!score) return;
+  player.previousMeasure();
+  updatePlayback(player.currentBeat);
+});
 ui.forwardButton.addEventListener('click', () => {
   if (!score) return;
   const next = score.measures?.find((measure) => measure.startBeat > player.currentBeat + 0.05);

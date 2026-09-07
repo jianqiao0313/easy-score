@@ -388,6 +388,78 @@ test('ScorePlayer seek and tempo changes cancel old sources and preserve transpo
   await player.dispose();
 });
 
+test('previousMeasure seeks to the preceding measure start across pickup and meter changes', async () => {
+  const positions = [];
+  const player = new ScorePlayer({ onPosition: (beat) => positions.push(beat) });
+  const navigationScore = {
+    ...score,
+    totalBeats: 11.5,
+    measures: [
+      { number: 1, startBeat: 0, durationBeats: 1, timeSignature: { beats: 1, beatType: 4 } },
+      { number: 2, startBeat: 1, durationBeats: 3, timeSignature: { beats: 3, beatType: 4 } },
+      { number: 3, startBeat: 4, durationBeats: 5, timeSignature: { beats: 5, beatType: 4 } },
+      { number: 4, startBeat: 9, durationBeats: 2.5, timeSignature: { beats: 5, beatType: 8 } },
+    ],
+  };
+  await player.load(navigationScore);
+
+  player.seek(6.25);
+  assert.equal(player.previousMeasure(), 1);
+  assert.equal(player.currentBeat, 1);
+  assert.equal(player.isPlaying, false);
+
+  player.seek(4);
+  assert.equal(player.previousMeasure(), 1);
+
+  player.seek(0.75);
+  assert.equal(player.previousMeasure(), 0);
+
+  player.seek(navigationScore.totalBeats);
+  assert.equal(player.previousMeasure(), 4);
+  assert.equal(positions.at(-1), 4);
+  await player.dispose();
+});
+
+test('previousMeasure uses the audible playback position and keeps playback running', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  FakeAudioContext.instances.length = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('piano.json')) {
+      return { ok: true, async json() { return { C4: 'piano-c', E4: 'piano-e' }; } };
+    }
+    return { ok: true, async arrayBuffer() { return new Uint8Array([1]).buffer; } };
+  };
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+  });
+
+  const player = new ScorePlayer({ instrumentId: 'piano' });
+  await player.load({
+    ...score,
+    totalBeats: 12,
+    measures: [
+      { number: 1, startBeat: 0, durationBeats: 4 },
+      { number: 2, startBeat: 4, durationBeats: 3 },
+      { number: 3, startBeat: 7, durationBeats: 5 },
+    ],
+  });
+  await player.play();
+  const context = FakeAudioContext.instances[0];
+  context.currentTime += 4;
+  assert.equal(player.currentBeat, 8);
+
+  const sourcesBeforeNavigation = context.bufferSources.slice();
+  assert.equal(player.previousMeasure(), 4);
+  assert.equal(player.currentBeat, 4);
+  assert.equal(player.isPlaying, true);
+  assert.ok(sourcesBeforeNavigation.every((source) => source.stopCalls.includes(0)));
+  player.stop();
+  await player.dispose();
+});
+
 test('pause during an instrument switch cancels the pending restart', async (t) => {
   const originalAudioContext = globalThis.AudioContext;
   const originalFetch = globalThis.fetch;

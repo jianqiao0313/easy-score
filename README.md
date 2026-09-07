@@ -4,6 +4,8 @@
 
 网页版 PDF 五线谱识别与播放器。使用 Audiveris 识别印刷乐谱，以 OpenSheetMusicDisplay 显示五线谱，并通过 Web Audio 播放钢琴或中音萨克斯音色。
 
+当前稳定版本：[1.0.0](https://github.com/jianqiao0313/easy-score/releases/tag/v1.0.0)。Docker 标签 `1.0.0` 对应此版本，`latest` 跟随 `main` 的最新构建。
+
 ## 使用 Docker 启动
 
 镜像已发布到 [Docker Hub](https://hub.docker.com/r/jianqiao0313/easy-score)，包含完整识谱引擎和音色，无需额外安装 Java 或 Audiveris。
@@ -14,17 +16,17 @@ docker run -d --name easy-score \
   --platform linux/amd64 \
   -p 127.0.0.1:4173:4173 \
   -v easy-score-data:/data \
-  jianqiao0313/easy-score:latest
+  jianqiao0313/easy-score:1.0.0
 ```
 
 打开 [http://localhost:4173](http://localhost:4173)。PDF 和识别结果保存在 `easy-score-data` 数据卷中；更新镜像时保留该卷即可。
 
 镜像支持 `linux/amd64`，Apple Silicon 需要通过 Docker 模拟运行。默认端口只允许本机访问；需要远程访问时，可通过反向代理提供服务。应用没有账户和登录功能，适合个人使用或可信网络部署。
 
-更新到最新镜像：
+更新镜像时，将拉取和启动命令中的标签统一设置为目标版本（以下以 `1.0.0` 为例），并继续使用原数据卷：
 
 ```sh
-docker pull jianqiao0313/easy-score:latest
+docker pull jianqiao0313/easy-score:1.0.0
 docker stop easy-score
 docker rm easy-score
 # 再次执行上面的 docker run 命令，继续使用原数据卷。

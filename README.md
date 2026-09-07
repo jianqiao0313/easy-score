@@ -4,14 +4,14 @@
 
 网页版五线谱识别与播放器。可识别 PDF、PNG 和 JPEG 印刷乐谱，也可直接导入 MusicXML；使用 OpenSheetMusicDisplay 显示五线谱，并通过 Web Audio 播放钢琴或中音萨克斯音色。
 
-当前稳定版本：[1.0.2](https://github.com/jianqiao0313/easy-score/releases/tag/v1.0.2)。Docker 标签 `1.0.2` 对应此版本，`latest` 跟随 `main` 的最新构建。
+当前稳定版本：[1.0.3](https://github.com/jianqiao0313/easy-score/releases/tag/v1.0.3)。Docker 标签 `1.0.3` 对应此版本，`latest` 跟随 `main` 的最新构建。
 
 ## 使用 Docker 启动
 
 镜像已发布到 [Docker Hub](https://hub.docker.com/r/jianqiao0313/easy-score)，包含完整识谱引擎和音色，无需额外安装 Java 或 Audiveris。
 
 ```sh
-docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.2
+docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.3
 ```
 
 打开 [http://localhost:4173](http://localhost:4173)。导入的原文件、识别或解析结果以及历史记录保存在 `easy-score-data` 数据卷中；更新镜像时保留该卷即可。
@@ -20,10 +20,10 @@ docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data 
 
 默认端口只允许本机访问；需要远程访问时，可通过反向代理提供服务。应用没有账户和登录功能，适合个人使用或可信网络部署。
 
-更新镜像时，将拉取和启动命令中的标签统一设置为目标版本（以下以 `1.0.2` 为例），并继续使用原数据卷：
+更新镜像时，将拉取和启动命令中的标签统一设置为目标版本（以下以 `1.0.3` 为例），并继续使用原数据卷：
 
 ```sh
-docker pull jianqiao0313/easy-score:1.0.2
+docker pull jianqiao0313/easy-score:1.0.3
 docker stop easy-score
 docker rm easy-score
 # 再次执行上面的 docker run 命令，继续使用原数据卷。
@@ -43,7 +43,7 @@ docker compose up -d --build
 
 1. 导入 PDF、PNG 或 JPEG 印刷五线谱并等待 OMR 识别，或导入 `.musicxml`、`.xml`、`.mxl` 文件直接解析播放。每个文件最大 50 MB；支持常用制谱软件导出的 `score-partwise` MusicXML。
 2. 成功导入的所有格式都会自动加入左侧“历史乐谱”，按导入时间倒序显示；点击即可重新打开和播放。PDF 与图片还可切换查看原谱，无需重复识别。
-3. 选择中音萨克斯或 Salamander 三角钢琴。中音萨克斯播放已针对采样覆盖与延音进行优化；首次使用默认中音萨克斯，以后优先读取浏览器保存的选择。
+3. 选择中音萨克斯或 Salamander 三角钢琴。中音萨克斯播放已针对采样覆盖与延音进行优化，1.0.3 缩短了尾音并适度减弱持续音的音量颤动；首次使用默认中音萨克斯，以后优先读取浏览器保存的选择。
 4. 设置每行显示的小节数。默认“自动”会根据可用宽度自然排版并随窗口调整；手动选择 1–8 小节会固定每行数量和音符区域宽度，行首谱号、调号和拍号另留空间，最后一行不会拉伸。设置保存在当前浏览器的 `localStorage` 中。
 5. 点击播放，可暂停、跳到上一小节或下一小节、拖动进度条，也可调整速度、音量和节拍器。
 6. 对照原始 PDF 或图片，或导出 MusicXML 到制谱软件继续校对。
@@ -52,7 +52,7 @@ docker compose up -d --build
 
 PDF 与图片识别在你部署的服务器上运行。OMR 可能产生错音、漏音和节奏错误，清晰的印刷谱效果更好；手写谱和复杂排版可能无法正确识别。MusicXML 导入不经过 OMR，目前面向常用制谱软件导出的 `score-partwise` 文档，不承诺覆盖 MusicXML 的全部格式与扩展。中音萨克斯选项只改变音色，不会自动移调。音色采样随应用提供，加载失败时会提示并使用合成音色。
 
-`main` / `latest` 的识谱预处理：PDF 使用 Poppler 按 350 DPI 渲染，已经高于 300 DPI；低分辨率图片使用本地 Pillow 的 Lanczos 重采样生成 300 DPI 识别副本，同时校正图片方向、将透明背景转为白底。原文件仍完整保留。缺少可靠 DPI 时按 A4 300 DPI 的约 3508 像素长边估算，并给出提示；已有足够像素的图片不会盲目放大。放大最多 4.5 倍，新生成的图片识别副本受 5000 像素长边和 2000 万像素限制；原图本身超过此上限时会跳过图片预处理、提示并使用原图识别，不对原图降采样。插值只能改善输入尺度，不能恢复原图丢失的细节，也不保证每份谱子的准确率都会提高。此功能在 1.0.2 发布后加入，固定 `1.0.2` 镜像不包含此改动。
+1.0.3 的识谱预处理：PDF 使用 Poppler 按 350 DPI 渲染，已经高于 300 DPI；低分辨率图片使用本地 Pillow 的 Lanczos 重采样生成 300 DPI 识别副本，同时校正图片方向、将透明背景转为白底。原文件仍完整保留。缺少可靠 DPI 时按 A4 300 DPI 的约 3508 像素长边估算，并给出提示；已有足够像素的图片不会盲目放大。放大最多 4.5 倍，新生成的图片识别副本受 5000 像素长边和 2000 万像素限制；原图本身超过此上限时会跳过图片预处理、提示并使用原图识别，不对原图降采样。插值只能改善输入尺度，不能恢复原图丢失的细节，也不保证每份谱子的准确率都会提高。
 
 ## 本地开发
 

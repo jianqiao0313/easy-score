@@ -4,10 +4,10 @@ easy-score 是一款网页版五线谱识别与播放器。镜像内包含 Web �
 
 ## 快速启动
 
-当前稳定版本为 `1.0.2`。x86_64 / amd64 主机复制下面一行即可启动：
+当前稳定版本为 `1.0.3`。x86_64 / amd64 主机复制下面一行即可启动：
 
 ```sh
-docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.2
+docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.3
 ```
 
 启动后打开 [http://localhost:4173](http://localhost:4173)。端口绑定到 `127.0.0.1`，只允许当前主机访问；如需提供远程访问，请在可信网络中配置反向代理。
@@ -25,18 +25,18 @@ Apple Silicon 或其他 ARM 主机需在镜像名前加 `--platform linux/amd64`
 - 在浏览器中保存音色和每行小节数偏好。
 - 对照原 PDF 或图片，并导出 MusicXML 继续校对。
 
-OMR 可能出现错音、漏音或节奏偏差，建议始终对照原谱校验。MusicXML 导入不经过 OMR，目前不承诺覆盖 MusicXML 的全部格式与扩展。中音萨克斯播放已针对采样覆盖与延音进行优化；该选项只改变音色，不会自动移调。
+OMR 可能出现错音、漏音或节奏偏差，建议始终对照原谱校验。MusicXML 导入不经过 OMR，目前不承诺覆盖 MusicXML 的全部格式与扩展。中音萨克斯播放已针对采样覆盖与延音进行优化，1.0.3 缩短了尾音并适度减弱持续音的音量颤动；该选项只改变音色，不会自动移调。
 
-`latest` 在 1.0.2 发布后增加了低分辨率图片预处理：使用镜像内的 Pillow 在本地按目标 300 DPI 重采样，校正方向和透明背景；PDF 继续按 350 DPI 渲染。原文件保持不变。没有可靠 DPI 时按常见 A4 页面尺寸估算并提示，已有足够像素的图片不会盲目放大；放大最多 4.5 倍，新生成的图片识别副本受 5000 像素长边与 2000 万像素限制。原图本身超过此上限时会提示并跳过图片预处理，以原图识别，不对原图降采样。插值无法恢复已丢失的细节，不保证识别一定更准确。固定 `1.0.2` 镜像不包含这项后续改动，使用它需拉取并启动 `latest`。
+1.0.3 增加了低分辨率图片预处理：使用镜像内的 Pillow 在本地按目标 300 DPI 重采样，校正方向和透明背景；PDF 继续按 350 DPI 渲染。原文件保持不变。没有可靠 DPI 时按常见 A4 页面尺寸估算并提示，已有足够像素的图片不会盲目放大；放大最多 4.5 倍，新生成的图片识别副本受 5000 像素长边与 2000 万像素限制。原图本身超过此上限时会提示并跳过图片预处理，以原图识别，不对原图降采样。插值无法恢复已丢失的细节，不保证识别一定更准确。
 
 ## 数据持久化与升级
 
 容器将数据写入 `/data/jobs`。上面的命令使用名为 `easy-score-data` 的 Docker 数据卷；删除或重建容器不会删除该卷中的导入文件、识别或解析结果以及历史记录。
 
-从旧版本升级到 `1.0.2`：
+从旧版本升级到 `1.0.3`：
 
 ```sh
-docker pull jianqiao0313/easy-score:1.0.2
+docker pull jianqiao0313/easy-score:1.0.3
 docker stop easy-score
 docker rm easy-score
 ```
@@ -76,7 +76,7 @@ easy-score 自有代码与文档采用 [MIT License](https://github.com/jianqiao
 
 镜像包含 Audiveris 主项目的固定版本源码压缩包，但这不等同于已核实其全部捆绑依赖、Java 运行时及系统组件的对应源码完整性。具体来源、义务和待核实项见 [第三方许可证核查](https://github.com/jianqiao0313/easy-score/blob/main/THIRD_PARTY_NOTICES.md) 与 [npm 版本及许可证清单](https://github.com/jianqiao0313/easy-score/blob/main/docs/DEPENDENCY_LICENSES.md)。
 
-`1.0.2` 镜像在 `/usr/share/doc/easy-score/` 保存应用许可证、声明、Node 许可证及系统包版本清单，在 `/opt/tessdata/LICENSE` 保存 OCR 模型许可证；npm 许可证及音色、字形声明可通过应用的 `/third-party-licenses.txt` 和 `/asset-licenses.txt` 下载。
+`1.0.3` 镜像在 `/usr/share/doc/easy-score/` 保存应用许可证、声明、Node 许可证及系统包版本清单，在 `/opt/tessdata/LICENSE` 保存 OCR 模型许可证；npm 许可证及音色、字形声明可通过应用的 `/third-party-licenses.txt` 和 `/asset-licenses.txt` 下载。
 
 ## 项目链接
 

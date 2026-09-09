@@ -1,53 +1,38 @@
 import { createReadStream } from 'node:fs';
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { createAudiverisEngine } from './engine.mjs';
 import { resolveUploadFormat, validateUpload } from './imports.mjs';
+import { createUploadReceiver } from './upload.mjs';
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const SAFE_JOB_ID = /^[A-Za-z0-9_-]+$/;
 
-function json(response, status, value) {
+function json(response, status, value, headers = {}) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(body),
     'cache-control': 'no-store',
+    ...headers,
   });
   response.end(body);
 }
 
-function error(response, status, message) {
-  json(response, status, { error: message });
+function error(response, status, message, headers) {
+  json(response, status, { error: message }, headers);
 }
 
 async function atomicJson(file, value) {
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(value, null, 2));
-  await rename(temporary, file);
-}
-
-async function readBody(request, maximum) {
-  const declared = Number(request.headers['content-length']);
-  if (Number.isFinite(declared) && declared > maximum) {
-    const failure = new Error(`Upload exceeds the ${maximum / 1024 / 1024} MB limit.`);
-    failure.statusCode = 413;
-    throw failure;
+  try {
+    await writeFile(temporary, JSON.stringify(value, null, 2));
+    await rename(temporary, file);
+  } catch (cause) {
+    await unlink(temporary).catch(() => {});
+    throw cause;
   }
-
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > maximum) {
-      const failure = new Error(`Upload exceeds the ${maximum / 1024 / 1024} MB limit.`);
-      failure.statusCode = 413;
-      throw failure;
-    }
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
 }
 
 function safeFileName(header) {
@@ -116,10 +101,11 @@ function isCompleteJobMetadata(job, directoryId) {
 }
 
 export class JobStore {
-  constructor({ root, demoRoot, engine = createAudiverisEngine() }) {
+  constructor({ root, demoRoot, engine = createAudiverisEngine(), persist = atomicJson }) {
     this.root = root;
     this.demoRoot = demoRoot;
     this.engine = engine;
+    this.persist = persist;
     this.jobs = new Map();
     this.saves = new Map();
     this.queue = [];
@@ -131,16 +117,20 @@ export class JobStore {
     await mkdir(this.demoRoot, { recursive: true });
     for (const entry of await readdir(this.root, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const job = await this.load(entry.name);
-      if (!job || job.id !== entry.name || !SAFE_JOB_ID.test(entry.name)
-        || !['queued', 'processing'].includes(job.status)) continue;
-      job.status = 'queued';
-      job.progress = 5;
-      job.message = '服务重启后重新排队';
-      await this.save(job);
-      this.queue.push(job.id);
+      try {
+        const job = await this.load(entry.name);
+        if (!job || job.id !== entry.name || !SAFE_JOB_ID.test(entry.name)
+          || !['queued', 'processing'].includes(job.status)) continue;
+        job.status = 'queued';
+        job.progress = 5;
+        job.message = '服务重启后重新排队';
+        await this.save(job).catch(() => {});
+        this.queue.push(job.id);
+      } catch {
+        // One unreadable job must not prevent other persisted jobs from loading.
+      }
     }
-    if (this.queue.length) void this.drain();
+    if (this.queue.length) this.startDrain();
   }
 
   directory(id) {
@@ -164,36 +154,47 @@ export class JobStore {
     const snapshot = structuredClone(job);
     const previous = this.saves.get(job.id) || Promise.resolve();
     const pending = previous.catch(() => {}).then(() =>
-      atomicJson(path.join(this.directory(job.id), 'job.json'), snapshot));
+      this.persist(path.join(this.directory(job.id), 'job.json'), snapshot));
     this.saves.set(job.id, pending);
     await pending;
   }
 
-  async create({ fileName, format, body, scoreXml = null }) {
+  async create({ fileName, format, sourcePath, scoreXml = null }) {
     const id = randomUUID();
     const directory = this.directory(id);
-    await mkdir(directory, { recursive: true });
-    await writeFile(path.join(directory, format.sourceFile), body);
-    if (scoreXml !== null) await writeFile(path.join(directory, 'score.musicxml'), scoreXml);
-    const job = {
-      id,
-      status: scoreXml === null ? 'queued' : 'done',
-      progress: scoreXml === null ? 5 : 100,
-      message: scoreXml === null ? '等待识别引擎' : '导入完成',
-      fileName,
-      sourceType: format.sourceType,
-      sourceMime: format.sourceMime,
-      sourceFile: format.sourceFile,
-      warnings: [],
-      createdAt: new Date().toISOString(),
-    };
-    if (scoreXml !== null) job.updatedAt = job.createdAt;
-    await this.save(job);
-    if (scoreXml === null) {
-      this.queue.push(id);
-      void this.drain();
+    try {
+      await mkdir(directory, { recursive: true });
+      await rename(sourcePath, path.join(directory, format.sourceFile));
+      if (scoreXml !== null) await writeFile(path.join(directory, 'score.musicxml'), scoreXml);
+      const job = {
+        id,
+        status: scoreXml === null ? 'queued' : 'done',
+        progress: scoreXml === null ? 5 : 100,
+        message: scoreXml === null ? '等待识别引擎' : '导入完成',
+        fileName,
+        sourceType: format.sourceType,
+        sourceMime: format.sourceMime,
+        sourceFile: format.sourceFile,
+        warnings: [],
+        createdAt: new Date().toISOString(),
+      };
+      if (scoreXml !== null) job.updatedAt = job.createdAt;
+      await this.save(job);
+      if (scoreXml === null) {
+        this.queue.push(id);
+        this.startDrain();
+      }
+      return job;
+    } catch (cause) {
+      this.jobs.delete(id);
+      this.saves.delete(id);
+      await rm(directory, { recursive: true, force: true }).catch(() => {});
+      throw cause;
     }
-    return job;
+  }
+
+  startDrain() {
+    void this.drain().catch(() => {});
   }
 
   async listScores() {
@@ -231,40 +232,54 @@ export class JobStore {
   async drain() {
     if (this.processing) return;
     this.processing = true;
-    while (this.queue.length) {
-      const id = this.queue.shift();
-      const job = await this.load(id);
-      if (!job) continue;
-      const directory = this.directory(id);
-      job.status = 'processing';
-      job.progress = 10;
-      job.message = 'Audiveris 正在分析乐谱';
-      await this.save(job);
-      try {
-        const result = await this.engine.convert({
-          inputPath: path.join(directory, sourceFile(job)),
-          outputDir: directory,
-          sourceType: sourceType(job),
-          onProgress: (progress, message) => {
-            job.progress = Math.max(job.progress, Math.min(95, progress));
-            job.message = message || 'Audiveris 正在分析乐谱';
-            void this.save(job).catch(() => {});
-          },
-        });
-        await writeFile(path.join(directory, 'score.musicxml'), result.xml);
-        if (result.warnings?.length) job.warnings.push(...result.warnings);
-        job.status = 'done';
-        job.progress = 100;
-        job.message = '识别完成';
-      } catch (cause) {
-        job.status = 'error';
-        job.progress = Math.max(job.progress, 10);
-        job.message = cause?.publicMessage || (cause instanceof Error ? cause.message : String(cause));
+    try {
+      while (this.queue.length) {
+        const id = this.queue.shift();
+        let job;
+        try {
+          job = await this.load(id);
+          if (!job) continue;
+          const directory = this.directory(id);
+          job.status = 'processing';
+          job.progress = 10;
+          job.message = 'Audiveris 正在分析乐谱';
+          await this.save(job);
+          try {
+            const result = await this.engine.convert({
+              inputPath: path.join(directory, sourceFile(job)),
+              outputDir: directory,
+              sourceType: sourceType(job),
+              onProgress: (progress, message) => {
+                job.progress = Math.max(job.progress, Math.min(95, progress));
+                job.message = message || 'Audiveris 正在分析乐谱';
+                void this.save(job).catch(() => {});
+              },
+            });
+            await writeFile(path.join(directory, 'score.musicxml'), result.xml);
+            if (result.warnings?.length) (job.warnings ||= []).push(...result.warnings);
+            job.status = 'done';
+            job.progress = 100;
+            job.message = '识别完成';
+          } catch (cause) {
+            job.status = 'error';
+            job.progress = Math.max(job.progress, 10);
+            job.message = cause?.publicMessage || (cause instanceof Error ? cause.message : String(cause));
+          }
+          job.updatedAt = new Date().toISOString();
+          await this.save(job);
+        } catch (cause) {
+          if (!job) continue;
+          job.status = 'error';
+          job.progress = Math.max(job.progress || 0, 10);
+          job.message = cause?.publicMessage || (cause instanceof Error ? cause.message : String(cause));
+          job.updatedAt = new Date().toISOString();
+          await this.save(job).catch(() => {});
+        }
       }
-      job.updatedAt = new Date().toISOString();
-      await this.save(job);
+    } finally {
+      this.processing = false;
+      if (this.queue.length) this.startDrain();
     }
-    this.processing = false;
   }
 }
 
@@ -293,6 +308,10 @@ export async function createApp({
 } = {}) {
   const store = new JobStore({ root: jobsRoot, demoRoot, engine });
   await store.initialize();
+  const receiveUpload = createUploadReceiver({
+    root: path.join(jobsRoot, '.uploads'),
+    maximum: MAX_UPLOAD_BYTES,
+  });
 
   const handler = async (request, response) => {
     try {
@@ -306,9 +325,12 @@ export async function createApp({
         const requestedFileName = safeFileName(request.headers['x-file-name']);
         const format = resolveUploadFormat(request.headers['content-type'], requestedFileName, hasFileName);
         const fileName = requestedFileName || `score${path.extname(format.sourceFile)}`;
-        const body = await readBody(request, MAX_UPLOAD_BYTES);
-        const { scoreXml } = validateUpload(format, body);
-        const job = await store.create({ fileName, format, body, scoreXml });
+        const job = await receiveUpload(request, async (sourcePath) => {
+          let validationBuffer = await readFile(sourcePath);
+          const { scoreXml } = validateUpload(format, validationBuffer);
+          validationBuffer = null;
+          return store.create({ fileName, format, sourcePath, scoreXml });
+        });
         return json(response, 202, publicJob(job));
       }
       if (request.method === 'GET' && url.pathname === '/api/scores') {
@@ -338,7 +360,7 @@ export async function createApp({
       if (fallback) return fallback(request, response);
       return error(response, 404, 'Not found.');
     } catch (cause) {
-      if (!response.headersSent) error(response, cause.statusCode || 500, cause.message || 'Internal server error.');
+      if (!response.headersSent) error(response, cause.statusCode || 500, cause.message || 'Internal server error.', cause.headers);
       else response.destroy(cause);
     }
   };

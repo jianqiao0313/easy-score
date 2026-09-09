@@ -1,11 +1,9 @@
-import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { parseMusicXML } from './musicxml.mjs';
-import { ScorePlayer } from './audio.mjs';
-import { syncCursorToBeat } from './cursor.mjs';
-import { loadPreferences, saveInstrument, saveMeasuresPerRow } from './preferences.mjs';
-import { markMeasureRowEnds, musicXmlWithSystemBreaks } from './score-layout.mjs';
+import { ScoreRenderer } from './score-renderer.mjs';
+import { ScoreImporter, fetchJson } from './score-importer.mjs';
+import { createPlaybackControls } from './playback-controls.mjs';
+import { loadPreferences, saveMeasuresPerRow } from './preferences.mjs';
 import { renderIcon, renderIcons } from './icons.js';
-import { importFormat } from './import-file.mjs';
 import './style.css';
 
 const $ = (selector) => document.querySelector(selector);
@@ -29,7 +27,6 @@ const ui = {
 renderIcons(document);
 renderIcons(ui.historyItemTemplate.content);
 
-let osmd;
 let score;
 let xmlText = '';
 let activeJob = null;
@@ -37,9 +34,7 @@ let activeJobSource = null;
 let activeRequest = 0;
 let retryAction = null;
 let currentTab = 'score';
-let cursorBeat = -1;
 let layoutRenderRequest = 0;
-let automaticLayoutWidth = 0;
 let historyRequest = 0;
 const preferences = loadPreferences();
 const scoreFontReady = Promise.all([
@@ -47,32 +42,19 @@ const scoreFontReady = Promise.all([
   document.fonts.load('600 16px "Source Han Sans CN VF"'),
 ]).catch(() => {}); // A font download failure should not prevent playing a score.
 
-const player = new ScorePlayer({
+const renderer = new ScoreRenderer({ scoreView: ui.scoreView, container: ui.osmdContainer, viewport: ui.dropZone, fontReady: scoreFontReady });
+const importer = new ScoreImporter();
+const { player, setPlaying, updatePlayback, setTempo, updateSoundSourceLabel } = createPlaybackControls({
+  ui,
   instrumentId: preferences.instrumentId,
-  onPosition: (beat) => updatePlayback(beat),
-  onEnded: () => {
-    setPlaying(false);
-    updatePlayback(score?.totalBeats || 0);
-  },
-  onStatus: ({ soundMode, message }) => {
-    updateSoundSourceLabel(false, soundMode);
-    if (message && (soundMode === 'synthesized' || soundMode === 'mixed')) setPracticeTip('音源提示', message, 'warning');
-  },
+  getScore: () => score,
+  onPosition: (beat) => renderer.syncCursor(beat),
+  onPlayingChange: () => updateCursorFollowing(),
+  onError: (message) => showError(message, null),
+  onTip: setPracticeTip,
 });
 
 ui.measuresPerRow.value = String(preferences.measuresPerRow);
-setInstrumentSelection(preferences.instrumentId);
-setVolume(ui.volumeRange.value);
-
-function formatTime(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-}
-
-function estimatedSeconds(beat, bpm = Number(ui.tempoInput.value)) {
-  return (Math.max(0, beat) * 60) / Math.max(1, bpm);
-}
 
 function setView(view) {
   ['emptyState', 'processingState', 'errorState', 'scoreView', 'pdfView'].forEach((key) => { ui[key].hidden = true; });
@@ -94,8 +76,7 @@ function setTab(tab) {
 }
 
 function updateCursorFollowing() {
-  if (!osmd) return;
-  osmd.setOptions({ followCursor: Boolean(player?.isPlaying && currentTab === 'score') });
+  renderer.setFollowing(Boolean(player?.isPlaying && currentTab === 'score'));
 }
 
 function showError(message, action) {
@@ -124,13 +105,6 @@ function showJob(job) {
   ui.scoreTitle.textContent = job.fileName || '正在读取乐谱';
   ui.scoreComposer.textContent = job.sourceType === 'musicxml' ? `${progress}% · 正在读取乐谱文件` : `${progress}% · 识别结果请对照原谱校验`;
   setView('processingState');
-}
-
-async function fetchJson(url, options) {
-  const response = await fetch(url, options);
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message || body.error || `请求失败（${response.status}）`);
-  return body;
 }
 
 async function checkHealth() {
@@ -196,10 +170,9 @@ async function loadHistoryScore(entry) {
   activeJobSource = 'history';
   showJob({ status: 'loading', progress: 100, fileName: entry.fileName });
   try {
-    const job = await fetchJson(`/api/jobs/${encodeURIComponent(entry.id)}`);
+    const { job, xml } = await importer.open(entry.id);
     if (request !== activeRequest) return;
-    if (job.status !== 'done') throw new Error('这份乐谱的识别结果尚未就绪。');
-    await loadCompletedJob(job, request);
+    await loadCompletedJob(job, xml, request);
   } catch (error) {
     if (request === activeRequest) showError(`历史乐谱打开失败：${error.message}`, retry);
     void refreshHistory();
@@ -211,56 +184,41 @@ async function uploadFile(file) {
   const request = ++activeRequest;
   resetLoadedState();
   activeJobSource = 'upload';
-  const format = importFormat(file);
-  if (!format) {
-    ui.fileInput.value = '';
-    return showError('请选择 PDF、MusicXML（.musicxml / .xml / .mxl）或 PNG / JPG 乐谱图片。', () => ui.fileInput.click());
-  }
-  if (file.size > 50 * 1024 * 1024) {
-    ui.fileInput.value = '';
-    return showError('文件超过 50 MB，请选择更小的乐谱文件。', () => ui.fileInput.click());
-  }
   retryAction = () => uploadFile(file);
-  showJob({ status: 'queued', sourceType: format.sourceType, progress: 0, fileName: file.name, message: '正在上传乐谱文件。' });
   try {
-    const job = await fetchJson('/api/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': format.mime, 'X-File-Name': encodeURIComponent(file.name) },
-      body: file,
+    const { job, xml } = await importer.upload(file, {
+      onProgress: (job) => {
+        if (request !== activeRequest) return;
+        showJob(job);
+        if (job.status === 'done') void refreshHistory();
+      },
     });
-    await handleJob({ ...job, fileName: job.fileName || file.name }, request);
+    if (request !== activeRequest) return;
+    await loadCompletedJob(job, xml, request);
   } catch (error) {
-    if (request === activeRequest) showError(`导入失败：${error.message}`, () => uploadFile(file));
-  } finally {
-    ui.fileInput.value = '';
-  }
-}
-
-async function handleJob(job, request) {
-  while (true) {
-    if (job.status === 'error') throw new Error(job.message || '识谱未能完成');
-    if (job.status === 'done') {
-      void refreshHistory();
-      if (request === activeRequest) return loadCompletedJob(job, request);
-      return;
+    if (request === activeRequest) {
+      const retry = error.code === 'INVALID_UPLOAD' ? () => ui.fileInput.click() : () => uploadFile(file);
+      showError(`导入失败：${error.message}`, retry);
     }
-    if (request === activeRequest) showJob(job);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    job = await fetchJson(`/api/jobs/${encodeURIComponent(job.id)}`);
+  } finally {
+    if (request === activeRequest) ui.fileInput.value = '';
   }
 }
 
-async function loadCompletedJob(job, request) {
-  const xmlUrl = job.xmlUrl || `/api/jobs/${encodeURIComponent(job.id)}/score.musicxml`;
-  const response = await fetch(xmlUrl);
-  if (!response.ok) throw new Error(`MusicXML 读取失败（${response.status}）`);
-  const source = await response.text();
+async function loadCompletedJob(job, source, request) {
   if (request !== activeRequest) return;
   const parsed = parseMusicXML(source);
   if (!parsed.notes?.length) throw new Error('识别结果中没有可播放的音符，请检查原谱或重新识别。');
 
-  await renderScore(source, request);
-  if (request !== activeRequest) return;
+  ui.measuresPerRow.disabled = true;
+  let rendered;
+  try {
+    rendered = await renderScore(source, request);
+  } finally {
+    if (request === activeRequest) ui.measuresPerRow.disabled = false;
+  }
+  if (!rendered || request !== activeRequest) return;
+  saveMeasuresPerRow(undefined, renderer.layout);
   xmlText = source;
   score = parsed;
   activeJob = job;
@@ -274,105 +232,27 @@ async function loadCompletedJob(job, request) {
   setTab('score');
 }
 
-function configureEngraving(osmdInstance) {
-  const rules = osmdInstance.EngravingRules;
-  rules.FixedMeasureWidth = true;
-  rules.FixedMeasureWidthUseForPickupMeasures = true;
-  rules.StretchLastSystemLine = false;
-  rules.LastSystemMaxScalingFactor = 1;
-  rules.NewPartAndSystemAfterFinalBarline = true;
-  rules.ShowRhythmAgainAfterPartEndOrFinalBarline = false;
-}
-
-function measuredFixedWidth(osmdInstance) {
-  const widths = (osmdInstance.GraphicSheet?.MeasureList || []).flat()
-    .map((measure) => measure?.minimumStaffEntriesWidth)
-    .filter((width) => Number.isFinite(width) && width > 0);
-  return widths.length ? Math.max(...widths) : 0;
-}
-
-function requiredScoreViewWidth(osmdInstance, measuresPerRow) {
-  const rules = osmdInstance.EngravingRules;
-  const systems = (osmdInstance.GraphicSheet?.MusicPages || []).flatMap((page) => page.MusicSystems || []);
-  const measureWidths = (osmdInstance.GraphicSheet?.MeasureList || []).map((staffMeasures) => Math.max(0, ...staffMeasures
-    .filter(Boolean)
-    .map((measure) => measure.beginInstructionsWidth + measure.minimumStaffEntriesWidth + measure.endInstructionsWidth)));
-  const rowWidths = [];
-  for (let index = 0; index < measureWidths.length; index += measuresPerRow) {
-    rowWidths.push(measureWidths.slice(index, index + measuresPerRow).reduce((sum, width) => sum + width, 0));
-  }
-  const labelWidth = Math.max(0, ...systems.map((system) => system.MaxLabelLength || 0)) + rules.SystemLabelsRightMargin;
-  const systemWidth = Math.max(0, ...rowWidths) + labelWidth;
-  const margins = rules.PageLeftMargin + rules.PageRightMargin + rules.SystemLeftMargin + rules.SystemRightMargin;
-  return Math.ceil((systemWidth + margins) * 10 * (osmdInstance.Zoom || 1)) + 56;
-}
-
-function automaticScoreWidth() {
-  const style = getComputedStyle(ui.dropZone);
-  return Math.max(1, Math.min(900, ui.dropZone.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
-}
-
-function resizeAutomaticScore() {
-  if (!osmd || !score || currentTab !== 'score' || ui.measuresPerRow.value !== 'auto' || ui.scoreView.hidden) return;
-  const width = automaticScoreWidth();
-  if (Math.abs(width - automaticLayoutWidth) < 1) return;
+async function resizeAutomaticScore() {
+  if (!renderer.instance || renderer.pending || !score || currentTab !== 'score' || ui.measuresPerRow.value !== 'auto' || ui.scoreView.hidden) return;
+  if (Math.abs(renderer.automaticWidth() - renderer.width) < 1) return;
   const { scrollTop, scrollLeft } = ui.dropZone;
-  osmd.setOptions({ followCursor: false });
-  ui.scoreView.style.width = `${width}px`;
-  automaticLayoutWidth = width;
-  osmd.render();
-  cursorBeat = -1;
-  updatePlayback(player.currentBeat);
-  updateCursorFollowing();
-  ui.dropZone.scrollTo(scrollLeft, scrollTop);
+  const request = activeRequest;
+  try {
+    if (!await renderScore(xmlText, request)) return;
+    updatePlayback(player.currentBeat);
+    updateCursorFollowing();
+    ui.dropZone.scrollTo(scrollLeft, scrollTop);
+  } catch (error) {
+    if (request === activeRequest) setPracticeTip('排版未更新', error.message, 'warning');
+  }
 }
 
-async function renderScore(source, request, layoutRequest = ++layoutRenderRequest) {
+function renderScore(source, request, layoutRequest = ++layoutRenderRequest) {
   const measuresPerRow = ui.measuresPerRow.value === 'auto' ? 'auto' : Number(ui.measuresPerRow.value);
-  const automatic = measuresPerRow === 'auto';
-  const nextOsmd = new OpenSheetMusicDisplay(ui.osmdContainer, {
-    autoResize: false,
-    backend: 'svg',
-    drawTitle: true,
-    drawingParameters: 'compacttight',
-    followCursor: false,
-    newSystemFromXML: !automatic,
-    defaultFontFamily: 'Source Han Sans CN VF',
+  return renderer.render(source, {
+    measuresPerRow,
+    isCurrent: () => request === activeRequest && layoutRequest === layoutRenderRequest,
   });
-  try {
-    await scoreFontReady;
-    await nextOsmd.load(musicXmlWithSystemBreaks(source, measuresPerRow));
-    if (request !== activeRequest || layoutRequest !== layoutRenderRequest) return;
-    markMeasureRowEnds(nextOsmd.Sheet?.SourceMeasures, measuresPerRow);
-    releaseOsmd();
-    ui.osmdContainer.replaceChildren();
-    ui.scoreView.style.minWidth = '';
-    ui.scoreView.style.width = '';
-    if (automatic) {
-      automaticLayoutWidth = automaticScoreWidth();
-      ui.scoreView.style.width = `${automaticLayoutWidth}px`;
-    }
-    ui.scoreView.classList.add('is-measuring');
-    if (!automatic) configureEngraving(nextOsmd);
-    nextOsmd.render();
-    const fixedWidth = automatic ? 0 : measuredFixedWidth(nextOsmd);
-    if (fixedWidth) {
-      nextOsmd.EngravingRules.FixedMeasureWidthFixedValue = fixedWidth;
-      const scoreViewWidth = `${requiredScoreViewWidth(nextOsmd, measuresPerRow)}px`;
-      ui.scoreView.style.minWidth = scoreViewWidth;
-      ui.scoreView.style.width = scoreViewWidth;
-      nextOsmd.render();
-    }
-    osmd = nextOsmd;
-    if (nextOsmd.cursor) {
-      nextOsmd.cursor.show();
-      nextOsmd.cursor.reset();
-    }
-  } catch (error) {
-    throw new Error(`乐谱排版失败：${error.message}`);
-  } finally {
-    ui.scoreView.classList.remove('is-measuring');
-  }
 }
 
 function setOriginalSource(job) {
@@ -426,12 +306,13 @@ function populateScore(job) {
 
 function resetLoadedState() {
   player.stop();
-  releaseOsmd();
+  renderer.clear();
+  layoutRenderRequest++;
+  ui.measuresPerRow.disabled = false;
   score = null;
   activeJob = null;
   updateHistorySelection();
   xmlText = '';
-  cursorBeat = -1;
   ui.scoreMeta.hidden = true;
   ui.warningDetails.hidden = true;
   ui.exportButton.disabled = true;
@@ -440,79 +321,6 @@ function resetLoadedState() {
   ui.sourceImage.removeAttribute('src');
   [ui.playButton, ui.previousButton, ui.forwardButton, ui.seekRange].forEach((element) => { element.disabled = true; });
   setPlaying(false);
-}
-
-function releaseOsmd() {
-  if (!osmd) return;
-  try { osmd.setOptions?.({ autoResize: false }); } catch { /* Version-specific cleanup is best-effort. */ }
-  try { osmd.clear?.(); } catch { /* The container is cleared before the next render. */ }
-  osmd = undefined;
-}
-
-function setPlaying(playing) {
-  ui.playButton.classList.toggle('is-playing', playing);
-  renderIcon(ui.playButton.querySelector('[data-icon]'), playing ? 'pause' : 'play');
-  ui.playButton.setAttribute('aria-label', playing ? '暂停' : '播放');
-  ui.playButton.title = playing ? '暂停' : '播放';
-  updateCursorFollowing();
-}
-
-function updatePlayback(beat) {
-  if (!score) return;
-  const currentBeat = Math.max(0, Math.min(score.totalBeats || 0, Number(beat) || 0));
-  const ratio = score.totalBeats ? currentBeat / score.totalBeats : 0;
-  ui.seekRange.value = String(Math.round(ratio * 1000));
-  ui.currentTime.textContent = formatTime(estimatedSeconds(currentBeat));
-  ui.totalTime.textContent = formatTime(estimatedSeconds(score.totalBeats));
-  const measure = [...(score.measures || [])].reverse().find((item) => currentBeat >= item.startBeat)?.number || 1;
-  ui.currentMeasure.textContent = String(measure);
-  syncCursor(currentBeat);
-}
-
-function syncCursor(beat) {
-  const cursor = osmd?.cursor;
-  if (!cursor) return;
-  try {
-    syncCursorToBeat(cursor, beat, { reset: beat < cursorBeat || cursorBeat < 0 });
-    cursorBeat = beat;
-  } catch {
-    cursor.hide();
-  }
-}
-
-function setInstrumentSelection(instrumentId) {
-  for (const item of ui.instrumentGroup.querySelectorAll('[data-instrument]')) {
-    const selected = item.dataset.instrument === instrumentId;
-    item.classList.toggle('is-active', selected);
-    item.setAttribute('aria-checked', String(selected));
-  }
-}
-
-function setTempo(value) {
-  const bpm = Math.max(30, Math.min(240, Math.round(Number(value) || 96)));
-  ui.tempoInput.value = String(bpm);
-  ui.tempoRange.value = String(bpm);
-  ui.tempoMark.textContent = `♩ = ${bpm}`;
-  player.setTempo(bpm);
-  if (score) updatePlayback(player.currentBeat);
-}
-
-function setVolume(value) {
-  const volume = Math.max(0, Math.min(100, Number(value) || 0));
-  ui.volumeRange.value = String(volume);
-  ui.volumeValue.textContent = `${volume}%`;
-  player.setVolume(volume / 100);
-}
-
-function updateSoundSourceLabel(loading = false, reportedMode = '') {
-  if (loading) return void (ui.soundSource.textContent = '正在加载音色…');
-  const source = reportedMode || player.soundMode || player.soundSource || player.audioSource || player.instrumentSource || player.sourceType;
-  if (source === 'sample' || source === 'sampled' || source === 'soundfont') ui.soundSource.textContent = '采样音色';
-  else if (source === 'mixed') ui.soundSource.textContent = '采样音色 · 部分音符使用合成';
-  else if (source === 'synth' || source === 'synthesized') ui.soundSource.textContent = '合成音色';
-  else if (player.isUsingSamples === true) ui.soundSource.textContent = '采样音色';
-  else if (player.isUsingSamples === false) ui.soundSource.textContent = '合成音色';
-  else ui.soundSource.textContent = score ? '音源状态未知' : '等待乐谱';
 }
 
 function setPracticeTip(title, message, iconName = 'info') {
@@ -526,41 +334,23 @@ function setPracticeTip(title, message, iconName = 'info') {
   ui.practiceTip.append(icon, copy);
 }
 
-async function selectInstrument(button) {
-  const id = button.dataset.instrument;
-  const buttons = [...ui.instrumentGroup.querySelectorAll('[data-instrument]')];
-  buttons.forEach((item) => { item.disabled = true; });
-  updateSoundSourceLabel(true);
-  try {
-    await player.setInstrument(id);
-    setInstrumentSelection(id);
-    saveInstrument(undefined, id);
-    updateSoundSourceLabel();
-  } catch (error) {
-    ui.soundSource.textContent = `音色加载失败`;
-    setPracticeTip('音色未切换', error.message || '请稍后重试。', 'warning');
-  } finally {
-    buttons.forEach((item) => { item.disabled = false; });
-  }
-}
-
 async function changeMeasuresPerRow() {
   const value = ui.measuresPerRow.value;
-  saveMeasuresPerRow(undefined, value);
-  if (!xmlText || !score) return;
+  if (!xmlText || !score) return void saveMeasuresPerRow(undefined, value);
+  const previousValue = renderer.layout;
   const request = ++layoutRenderRequest;
   const tab = currentTab;
-  const scrollTop = ui.dropZone.scrollTop;
-  const scrollLeft = ui.dropZone.scrollLeft;
+  const { scrollTop, scrollLeft } = ui.dropZone;
   ui.measuresPerRow.disabled = true;
   try {
-    await renderScore(xmlText, activeRequest, request);
-    if (request !== layoutRenderRequest) return;
-    cursorBeat = -1;
+    if (!await renderScore(xmlText, activeRequest, request)) return;
+    saveMeasuresPerRow(undefined, value);
     updatePlayback(player.currentBeat);
     setTab(tab);
     ui.dropZone.scrollTo(scrollLeft, scrollTop);
   } catch (error) {
+    if (request !== layoutRenderRequest) return;
+    ui.measuresPerRow.value = String(previousValue);
     setPracticeTip('排版未更新', error.message || '请稍后重试。', 'warning');
   } finally {
     if (request === layoutRenderRequest) ui.measuresPerRow.disabled = false;
@@ -589,48 +379,6 @@ ui.scoreTab.addEventListener('click', () => setTab('score'));
 ui.pdfTab.addEventListener('click', () => setTab('pdf'));
 ui.exportButton.addEventListener('click', exportXml);
 ui.measuresPerRow.addEventListener('change', changeMeasuresPerRow);
-ui.instrumentGroup.addEventListener('click', (event) => { const button = event.target.closest('[data-instrument]'); if (button) selectInstrument(button); });
-ui.tempoRange.addEventListener('input', () => setTempo(ui.tempoRange.value));
-ui.tempoInput.addEventListener('change', () => setTempo(ui.tempoInput.value));
-ui.tempoDown.addEventListener('click', () => setTempo(Number(ui.tempoInput.value) - 2));
-ui.tempoUp.addEventListener('click', () => setTempo(Number(ui.tempoInput.value) + 2));
-ui.volumeRange.addEventListener('input', () => setVolume(ui.volumeRange.value));
-ui.volumeDown.addEventListener('click', () => setVolume(Number(ui.volumeRange.value) - 10));
-ui.volumeUp.addEventListener('click', () => setVolume(Number(ui.volumeRange.value) + 10));
-ui.metronomeToggle.addEventListener('click', () => {
-  const enabled = ui.metronomeToggle.getAttribute('aria-checked') !== 'true';
-  ui.metronomeToggle.setAttribute('aria-checked', String(enabled));
-  ui.metronomeToggle.querySelector('em').textContent = enabled ? '开启' : '关闭';
-  player.setMetronome(enabled);
-});
-ui.playButton.addEventListener('click', async () => {
-  if (!score) return;
-  try {
-    if (player.isPlaying) player.pause(); else await player.play();
-    setPlaying(player.isPlaying);
-    updateSoundSourceLabel();
-  } catch (error) {
-    showError(`播放失败：${error.message}`, null);
-  }
-});
-ui.previousButton.addEventListener('click', () => {
-  if (!score) return;
-  player.previousMeasure();
-  updatePlayback(player.currentBeat);
-});
-ui.forwardButton.addEventListener('click', () => {
-  if (!score) return;
-  const next = score.measures?.find((measure) => measure.startBeat > player.currentBeat + 0.05);
-  player.seek(next?.startBeat ?? score.totalBeats);
-  updatePlayback(player.currentBeat);
-});
-ui.seekRange.addEventListener('input', () => {
-  if (!score) return;
-  const beat = (Number(ui.seekRange.value) / 1000) * score.totalBeats;
-  player.seek(beat);
-  updatePlayback(beat);
-});
-
 for (const eventName of ['dragenter', 'dragover']) {
   ui.dropZone.addEventListener(eventName, (event) => { event.preventDefault(); ui.dropOverlay.classList.add('is-visible'); });
   ui.uploadButton.addEventListener(eventName, (event) => { event.preventDefault(); ui.uploadButton.classList.add('is-dragging'); });
@@ -652,6 +400,8 @@ const scoreResizeObserver = new ResizeObserver(() => {
 scoreResizeObserver.observe(ui.dropZone);
 window.addEventListener('beforeunload', () => {
   activeRequest++;
+  importer.cancel();
+  renderer.clear();
   scoreResizeObserver.disconnect();
   cancelAnimationFrame(scoreResizeFrame);
   player.dispose();

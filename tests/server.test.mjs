@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { zipSync, strToU8 } from 'fflate';
-import { createApp, MAX_UPLOAD_BYTES } from '../server/app.mjs';
+import { createApp, JobStore, MAX_UPLOAD_BYTES } from '../server/app.mjs';
 import { createAudiverisEngine, musicXmlFromMxl } from '../server/engine.mjs';
 
 const TEST_PDF = Buffer.from('%PDF-1.7\n% fake test fixture only\n%%EOF');
@@ -92,6 +92,26 @@ async function waitFor(base, id, expected = 'done') {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Job ${id} did not finish.`);
+}
+
+async function uploadTemporaryFiles(jobsRoot) {
+  try {
+    return await readdir(path.join(jobsRoot, '.uploads'));
+  } catch (cause) {
+    if (cause.code === 'ENOENT') return [];
+    throw cause;
+  }
+}
+
+function openUpload(base) {
+  const url = new URL('/api/jobs', base);
+  const request = httpRequest(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/pdf', 'transfer-encoding': 'chunked' },
+  });
+  request.on('error', () => {});
+  request.write('%PDF-');
+  return request;
 }
 
 test('health exposes the exact engine availability shape', async (t) => {
@@ -470,6 +490,175 @@ test('the job queue never invokes more than one engine conversion concurrently',
   const [first, second] = await Promise.all([request(), request()]);
   await Promise.all([waitFor(base, first.id), waitFor(base, second.id)]);
   assert.equal(maximum, 1);
+});
+
+test('job progress persistence is serialized in callback order', async (t) => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'score-player-queue-'));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const id = 'serialized-job';
+  const directory = path.join(temporary, id);
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, 'source.pdf'), TEST_PDF);
+
+  let active = 0;
+  let maximum = 0;
+  const snapshots = [];
+  const store = new JobStore({
+    root: temporary,
+    demoRoot: path.join(temporary, 'demo'),
+    engine: fakeEngine({
+      async convert({ onProgress }) {
+        onProgress(30, 'first progress');
+        onProgress(70, 'second progress');
+        return { xml: TEST_XML };
+      },
+    }),
+    async persist(_file, snapshot) {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      snapshots.push({ status: snapshot.status, progress: snapshot.progress, message: snapshot.message });
+      await new Promise((resolve) => setTimeout(resolve, snapshot.progress === 30 ? 15 : 1));
+      active -= 1;
+    },
+  });
+  store.jobs.set(id, {
+    id, status: 'queued', progress: 5, message: 'queued', fileName: 'score.pdf', warnings: [],
+  });
+  store.queue.push(id);
+
+  await store.drain();
+
+  assert.equal(maximum, 1);
+  assert.deepEqual(snapshots.map(({ status, progress }) => [status, progress]), [
+    ['processing', 10],
+    ['processing', 30],
+    ['processing', 70],
+    ['done', 100],
+  ]);
+});
+
+test('queue load and persistence failures are isolated and never leave processing wedged', async (t) => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'score-player-queue-failures-'));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const ids = ['load-fails', 'start-save-fails', 'finish-save-fails', 'later-job'];
+  for (const id of ids.slice(1)) {
+    const directory = path.join(temporary, id);
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, 'source.pdf'), TEST_PDF);
+  }
+
+  const conversions = [];
+  const failures = new Set();
+  const store = new JobStore({
+    root: temporary,
+    demoRoot: path.join(temporary, 'demo'),
+    engine: fakeEngine({
+      async convert({ inputPath }) {
+        conversions.push(path.basename(path.dirname(inputPath)));
+        return { xml: TEST_XML };
+      },
+    }),
+    async persist(_file, snapshot) {
+      const key = `${snapshot.id}:${snapshot.status}`;
+      if ((key === 'start-save-fails:processing' || key === 'finish-save-fails:done') && !failures.has(key)) {
+        failures.add(key);
+        throw new Error(`fixture ${key}`);
+      }
+    },
+  });
+  for (const id of ids.slice(1)) {
+    store.jobs.set(id, { id, status: 'queued', progress: 5, message: 'queued', fileName: `${id}.pdf`, warnings: [] });
+  }
+  const originalLoad = store.load.bind(store);
+  store.load = async (id) => {
+    if (id === 'load-fails') throw new Error('fixture load failure');
+    return originalLoad(id);
+  };
+  store.queue.push(...ids);
+
+  await assert.doesNotReject(store.drain());
+
+  assert.equal(store.processing, false);
+  assert.deepEqual(store.queue, []);
+  assert.deepEqual(conversions, ['finish-save-fails', 'later-job']);
+  assert.equal(store.jobs.get('start-save-fails').status, 'error');
+  assert.equal(store.jobs.get('finish-save-fails').status, 'error');
+  assert.equal(store.jobs.get('later-job').status, 'done');
+
+  store.queue.push('later-job');
+  await assert.doesNotReject(store.drain());
+  assert.equal(store.processing, false);
+  assert.deepEqual(conversions, ['finish-save-fails', 'later-job', 'later-job']);
+});
+
+test('uploads are limited to two simultaneous receives and reject excess work with Retry-After', async (t) => {
+  const { base, jobsRoot } = await fixture(t, fakeEngine());
+  const first = openUpload(base);
+  const second = openUpload(base);
+  t.after(() => {
+    first.destroy();
+    second.destroy();
+  });
+
+  for (let attempt = 0; attempt < 50 && (await uploadTemporaryFiles(jobsRoot)).length < 2; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal((await uploadTemporaryFiles(jobsRoot)).length, 2);
+
+  const busy = await fetch(`${base}/api/jobs`, {
+    method: 'POST', headers: { 'content-type': 'application/pdf' }, body: TEST_PDF,
+  });
+  assert.equal(busy.status, 503);
+  assert.equal(busy.headers.get('retry-after'), '1');
+  assert.match((await busy.json()).error, /busy/i);
+
+  first.destroy();
+  second.destroy();
+  for (let attempt = 0; attempt < 50 && (await uploadTemporaryFiles(jobsRoot)).length; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.deepEqual(await uploadTemporaryFiles(jobsRoot), []);
+});
+
+test('streamed uploads clean temporary files after invalid input, oversize, abort, and create failure', async (t) => {
+  const { base, jobsRoot, store } = await fixture(t, fakeEngine());
+
+  const invalid = await fetch(`${base}/api/jobs`, {
+    method: 'POST', headers: { 'content-type': 'application/pdf' }, body: 'not a PDF',
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(await uploadTemporaryFiles(jobsRoot), []);
+
+  const oversized = httpRequest(new URL('/api/jobs', base), {
+    method: 'POST',
+    headers: { 'content-type': 'application/pdf', 'transfer-encoding': 'chunked' },
+  });
+  const oversizedResponse = once(oversized, 'response').then(([response]) => response);
+  oversized.write(Buffer.from('%PDF-'));
+  const chunk = Buffer.alloc(1024 * 1024);
+  for (let index = 0; index < 50; index += 1) oversized.write(chunk);
+  oversized.end(Buffer.from('x'));
+  const rejected = await oversizedResponse;
+  assert.equal(rejected.statusCode, 413);
+  assert.deepEqual(await uploadTemporaryFiles(jobsRoot), []);
+
+  const aborted = openUpload(base);
+  for (let attempt = 0; attempt < 50 && !(await uploadTemporaryFiles(jobsRoot)).length; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  aborted.destroy();
+  for (let attempt = 0; attempt < 50 && (await uploadTemporaryFiles(jobsRoot)).length; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.deepEqual(await uploadTemporaryFiles(jobsRoot), []);
+
+  store.persist = async () => { throw new Error('fixture create failure'); };
+  const createFailure = await fetch(`${base}/api/jobs`, {
+    method: 'POST', headers: { 'content-type': 'application/pdf' }, body: TEST_PDF,
+  });
+  assert.equal(createFailure.status, 500);
+  assert.deepEqual(await uploadTemporaryFiles(jobsRoot), []);
+  assert.deepEqual((await readdir(jobsRoot)).filter((name) => name !== '.uploads'), []);
 });
 
 test('engine failures are surfaced as job errors and output stays unavailable', async (t) => {

@@ -922,7 +922,7 @@ THE SOFTWARE.
 
 ----- ADDITIONAL THIRD-PARTY ASSET NOTICES -----
 
-Instrument sample attribution and the original Fluid SoundFont MIT text:
+Instrument sample attribution and license references:
 /asset-licenses.txt
 https://github.com/jianqiao0313/easy-score/blob/main/public/asset-licenses.txt
 

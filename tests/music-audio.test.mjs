@@ -79,27 +79,6 @@ function decodedBuffer(samples, duration = 2) {
   };
 }
 
-function loopBoundaryError(channel, sampleRate, startTime, endTime) {
-  const start = Math.round(startTime * sampleRate);
-  const end = Math.round(endTime * sampleRate);
-  let error = 0;
-  for (let offset = -8; offset <= 8; offset += 1) {
-    error += (channel[start + offset] - channel[end + offset]) ** 2;
-  }
-  return error;
-}
-
-function levelSwing(channel, sampleRate, start, end) {
-  const levels = [];
-  const window = Math.round(sampleRate * 0.04);
-  for (let index = Math.round(start * sampleRate); index + window < end * sampleRate; index += window) {
-    let energy = 0;
-    for (let offset = 0; offset < window; offset += 1) energy += channel[index + offset] ** 2;
-    levels.push(Math.sqrt(energy / window));
-  }
-  return Math.max(...levels) / Math.min(...levels);
-}
-
 const score = {
   tempo: 120,
   timeSignature: { beats: 4, beatType: 4 },
@@ -177,19 +156,19 @@ test('ScorePlayer exposes distinct instruments and falls back visibly to synthes
   await player.dispose();
 });
 
-test('ScorePlayer defaults to alto saxophone without creating an AudioContext and accepts a stored initial instrument', () => {
+test('ScorePlayer defaults to piano without creating an AudioContext and accepts a stored initial instrument', () => {
   FakeAudioContext.instances.length = 0;
 
   const defaultPlayer = new ScorePlayer();
-  const storedPreferencePlayer = new ScorePlayer({ instrumentId: 'piano' });
+  const storedPreferencePlayer = new ScorePlayer({ instrumentId: 'saxophone' });
 
-  assert.equal(defaultPlayer.instrumentId, 'saxophone');
-  assert.equal(storedPreferencePlayer.instrumentId, 'piano');
+  assert.equal(defaultPlayer.instrumentId, 'piano');
+  assert.equal(storedPreferencePlayer.instrumentId, 'saxophone');
   assert.equal(FakeAudioContext.instances.length, 0);
   assert.throws(() => new ScorePlayer({ instrumentId: 'accordion' }), /未知音色/);
 });
 
-test('ScorePlayer pitch-shifts the nearest audible alto sax sample when the requested sample is silent', async (t) => {
+test('ScorePlayer pitch-shifts the nearest audible saxophone sample when the requested sample is silent', async (t) => {
   const originalAudioContext = globalThis.AudioContext;
   const originalFetch = globalThis.fetch;
   FakeAudioContext.instances.length = 0;
@@ -222,76 +201,122 @@ test('ScorePlayer pitch-shifts the nearest audible alto sax sample when the requ
   });
 
   const statuses = [];
-  const player = new ScorePlayer({ onStatus: (status) => statuses.push(status) });
+  const player = new ScorePlayer({ instrumentId: 'saxophone', onStatus: (status) => statuses.push(status) });
+  t.after(() => player.dispose());
   await player.load({ ...score, notes: [{ ...score.notes[0], midi: 86 }] });
   await player.play();
 
   const source = FakeAudioContext.instances[0].bufferSources[0];
   assert.deepEqual(fetchedSamples, ['sax-d6', 'sax-db6', 'sax-c6']);
   assert.ok(Math.abs(source.playbackRate.value - 2 ** (2 / 12)) < 1e-10);
-  assert.match(statuses.at(-1).message, /FluidR3_GM 中音萨克斯/);
+  assert.match(statuses.at(-1).message, /Karoryfer 萨克斯/);
   player.stop();
   await player.dispose();
 });
 
-test('ScorePlayer aligns the alto sax loop waveform and uses a short release after the written note duration', async (t) => {
+test('saxophone uses explicit sustain loops and holds the note until a short release', async (t) => {
   const originalAudioContext = globalThis.AudioContext;
   const originalFetch = globalThis.fetch;
-  const originalDecode = FakeAudioContext.prototype.decodeAudioData;
   FakeAudioContext.instances.length = 0;
   globalThis.AudioContext = FakeAudioContext;
-  const sampleRate = 1000;
-  const duration = 2;
-  const channel = Float32Array.from({ length: sampleRate * duration }, (_, index) => {
-    const time = index / sampleRate;
-    return Math.sin(2 * Math.PI * 37 * time) * (0.7 + 0.08 * Math.sin(2 * Math.PI * 0.8 * time));
-  });
+  const fetchedSamples = [];
   globalThis.fetch = async (url) => {
-    if (String(url).endsWith('saxophone.json')) {
-      return { ok: true, async json() { return { C4: 'sax-c4' }; } };
+    if (String(url).endsWith('.json')) {
+      return { ok: true, async json() { return { C4: { url: 'sax-c4', loop: { start: 0.5, end: 1.5 } } }; } };
     }
+    fetchedSamples.push(url);
     return { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
   };
-  FakeAudioContext.prototype.decodeAudioData = async () => ({
-    duration,
-    sampleRate,
-    numberOfChannels: 1,
-    getChannelData() { return channel; },
-  });
   t.after(() => {
     globalThis.AudioContext = originalAudioContext;
     globalThis.fetch = originalFetch;
-    FakeAudioContext.prototype.decodeAudioData = originalDecode;
   });
-
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'saxophone' });
   t.after(() => player.dispose());
-  await player.load({ ...score, notes: [{ ...score.notes[0], durationBeats: 2 }] });
+  await player.load({ ...score, totalBeats: 12, notes: [{ ...score.notes[0], midi: 61, durationBeats: 12 }] });
   await player.play();
-
-  const source = FakeAudioContext.instances[0].bufferSources[0];
+  const context = FakeAudioContext.instances[0];
+  const source = context.bufferSources[0];
+  assert.deepEqual(fetchedSamples, ['sax-c4']);
   assert.equal(source.loop, true);
-  assert.ok(source.loopStart >= duration * 0.31 && source.loopStart <= duration * 0.33);
-  assert.ok(source.loopEnd >= duration * 0.68 && source.loopEnd <= duration * 0.82);
-  assert.ok(
-    loopBoundaryError(channel, sampleRate, source.loopStart, source.loopEnd)
-      < loopBoundaryError(channel, sampleRate, duration * 0.25, duration * 0.72) * 0.01,
-  );
-
+  assert.equal(source.loopStart, 0.5);
+  assert.equal(source.loopEnd, 1.5);
+  const rate = 2 ** (1 / 12);
+  assert.equal(source.playbackRate.value, rate);
   const noteStart = source.started.when;
-  const noteEnd = noteStart + 1;
-  assert.deepEqual(source.connections[0].gain.events, [
-    { type: 'set', value: 0.0001, time: noteStart },
-    { type: 'linear', value: 0.46, time: noteStart + 0.008 },
-    { type: 'set', value: 0.46, time: noteEnd },
-    { type: 'linear', value: 0.0001, time: noteEnd + 0.06 },
-  ]);
-  assert.equal(source.stopTime, noteEnd + 0.06);
-  player.stop();
-  await player.dispose();
+  const noteEnd = noteStart + 6;
+  const events = source.connections[0].gain.events;
+  assert.equal(events[1].type, 'linear');
+  assert.ok(events[1].time - noteStart <= 0.015, 'retain the recorded attack');
+  assert.deepEqual(events[2], { type: 'set', value: events[1].value, time: noteEnd });
+  assert.equal(events[3].value, 0.0001);
+  assert.ok(events[3].time > noteEnd && events[3].time < noteEnd + 0.15);
+  assert.equal(source.stopTime, events[3].time);
+
+  player.seek(9); // 4.5 seconds into a 2-second sample: resume inside its sustain loop.
+  const resumed = context.bufferSources.at(-1);
+  assert.ok(resumed.started.offset >= 0.5 && resumed.started.offset < 1.5);
+  assert.ok(Math.abs(resumed.started.offset - (0.5 + (4.5 * rate - 0.5) % 1)) < 1e-10);
 });
 
-test('alto sax gently reduces sustained level modulation while preserving attack and stereo balance', async (t) => {
+test('invalid sax loop metadata plays the recording without an unsafe loop', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  globalThis.AudioContext = FakeAudioContext;
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+  });
+  for (const loop of [null, { start: -1, end: 1 }, { start: 1, end: 0.5 }, { start: 0.5, end: 3 }, { start: 0.5, end: '1.5' }]) {
+    globalThis.fetch = async (url) => String(url).endsWith('.json')
+      ? { ok: true, async json() { return { C4: { url: 'sax-c4', loop } }; } }
+      : { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+    const player = new ScorePlayer({ instrumentId: 'saxophone' });
+    try {
+      await player.load({ ...score, notes: [score.notes[0]] });
+      await player.play();
+      assert.equal(player.soundMode, 'sample');
+      assert.notEqual(FakeAudioContext.instances.at(-1).bufferSources[0].loop, true);
+    } finally {
+      await player.dispose();
+    }
+  }
+});
+
+test('out-of-range sax notes fall back individually and do not poison subsequent scores', async (t) => {
+  const originalAudioContext = globalThis.AudioContext;
+  const originalFetch = globalThis.fetch;
+  FakeAudioContext.instances.length = 0;
+  globalThis.AudioContext = FakeAudioContext;
+  globalThis.fetch = async (url) => String(url).endsWith('.json')
+    ? { ok: true, async json() { return { Db3: 'sax-db3', C4: 'sax-c4', A5: 'sax-a5' }; } }
+    : { ok: true, async arrayBuffer() { return Uint8Array.of(1).buffer; } };
+  t.after(() => {
+    globalThis.AudioContext = originalAudioContext;
+    globalThis.fetch = originalFetch;
+  });
+  const statuses = [];
+  const player = new ScorePlayer({ instrumentId: 'saxophone', onStatus: (status) => statuses.push(status) });
+  t.after(() => player.dispose());
+  await player.load({ ...score, notes: [36, 60, 94].map((midi) => ({ ...score.notes[0], midi })) });
+  await player.play();
+  const context = FakeAudioContext.instances[0];
+  assert.equal(player.soundMode, 'mixed');
+  assert.equal(player.soundSource, 'mixed');
+  assert.equal(context.bufferSources.length, 1, 'C4 should use the recording');
+  assert.equal(context.oscillators.length, 2, 'only C2 and Bb6 should use synthesis');
+  assert.match(statuses.at(-1).message, /2.*合成/);
+
+  await player.load({ ...score, notes: [{ ...score.notes[0], midi: 36 }] });
+  await player.play();
+  assert.equal(player.soundMode, 'synthesized');
+  await player.load({ ...score, notes: [score.notes[0]] });
+  await player.play();
+  assert.equal(player.soundMode, 'sample');
+  assert.equal(context.bufferSources.length, 2, 'a later C4 score must recover automatically');
+});
+
+test('saxophone preserves recorded dynamics, attack and stereo balance without rewriting cached PCM', async (t) => {
   const originalAudioContext = globalThis.AudioContext;
   const originalFetch = globalThis.fetch;
   const originalDecode = FakeAudioContext.prototype.decodeAudioData;
@@ -316,19 +341,13 @@ test('alto sax gently reduces sustained level modulation while preserving attack
     globalThis.fetch = originalFetch;
     FakeAudioContext.prototype.decodeAudioData = originalDecode;
   });
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'saxophone' });
   t.after(() => player.dispose());
   await player.load({ ...score, notes: [score.notes[0]] });
   await player.play();
-  const before = Math.log(levelSwing(original, sampleRate, 0.4, 1.7));
-  const after = Math.log(levelSwing(left, sampleRate, 0.4, 1.7));
-  assert.ok(after < before * 0.85, 'sustain modulation should be weaker');
-  assert.ok(after > before * 0.5, 'retain some natural movement');
-  assert.deepEqual(left.slice(0, sampleRate * 0.08), original.slice(0, sampleRate * 0.08));
+  assert.ok(left.every((value, index) => value === original[index]), 'preserve natural recorded breath and dynamics');
   for (let index = 0; index < left.length; index += 1) {
-    assert.ok(Number.isFinite(left[index]));
-    assert.equal(Math.sign(left[index]), Math.sign(original[index]), 'gain shaping must not change waveform phase');
-    assert.ok(Math.abs(right[index] - left[index] * 0.5) < 1e-6);
+    assert.ok(Math.abs(right[index] - original[index] * 0.5) < 1e-6);
   }
   const onceProcessed = left.slice();
   player.stop();
@@ -409,7 +428,7 @@ test('ScorePlayer reports the beat currently rendered by the audio output device
     globalThis.fetch = originalFetch;
   });
 
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'saxophone' });
   await player.load(score);
   await player.play();
   const context = FakeAudioContext.instances[0];
@@ -437,7 +456,7 @@ test('ScorePlayer does not finish before the output device renders the score end
     globalThis.fetch = originalFetch;
   });
 
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'saxophone' });
   await player.load({ ...score, totalBeats: 1, notes: [score.notes[0]] });
   await player.play();
   const context = FakeAudioContext.instances[0];
@@ -519,7 +538,7 @@ test('ScorePlayer position does not regress behind a new seek anchor while outpu
     globalThis.fetch = originalFetch;
   });
 
-  const player = new ScorePlayer();
+  const player = new ScorePlayer({ instrumentId: 'saxophone' });
   await player.load(score);
   await player.play();
   const context = FakeAudioContext.instances[0];

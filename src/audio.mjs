@@ -1,9 +1,6 @@
-export const INSTRUMENTS = Object.freeze([
-  Object.freeze({ id: 'piano', name: '钢琴', description: 'Salamander 大三角钢琴（加载失败时使用合成音色）' }),
-  Object.freeze({ id: 'saxophone', name: '中音萨克斯', description: '本地采样中音萨克斯（加载失败时使用合成音色）' }),
-]);
+import { DEFAULT_INSTRUMENT_ID, isInstrumentId } from './instruments.mjs';
+export { INSTRUMENTS } from './instruments.mjs';
 
-const INSTRUMENT_IDS = new Set(INSTRUMENTS.map(({ id }) => id));
 const SAMPLE_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 const LOOKAHEAD_SECONDS = 0.15;
 const SCHEDULER_INTERVAL_MS = 25;
@@ -13,10 +10,7 @@ const SAMPLE_FALLBACK_SEMITONES = 12;
 const PIANO_ATTACK_SECONDS = 0.005;
 const PIANO_RELEASE_SECONDS = 0.3;
 const SAX_ATTACK_SECONDS = 0.008;
-const SAX_RELEASE_SECONDS = 0.06;
-const SAX_LOOP_START_RATIO = 0.32;
-const SAX_LOOP_SEARCH_START_RATIO = 0.68;
-const SAX_LOOP_SEARCH_END_RATIO = 0.82;
+const SAX_RELEASE_SECONDS = 0.09;
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -32,95 +26,16 @@ function safeStop(node, when = 0) {
   try { node.disconnect(); } catch { /* Disconnect is best-effort. */ }
 }
 
-function softenSaxModulation(buffer) {
-  if (!Number.isFinite(buffer?.sampleRate) || buffer.sampleRate <= 0
-    || !Number.isFinite(buffer.numberOfChannels) || typeof buffer.getChannelData !== 'function') return buffer;
-  const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
-  if (!channels.length) return buffer;
-  const frameCount = Math.min(...channels.map(({ length }) => length));
-  if (frameCount < Math.max(256, buffer.sampleRate * 0.25)) return buffer;
-  const blockSize = Math.max(1, Math.round(buffer.sampleRate * 0.02));
-  const energies = new Float64Array(Math.ceil(frameCount / blockSize));
-  for (let block = 0; block < energies.length; block += 1) {
-    const start = block * blockSize;
-    const end = Math.min(frameCount, start + blockSize);
-    let energy = 0;
-    for (const channel of channels) {
-      for (let frame = start; frame < end; frame += 1) energy += channel[frame] ** 2;
-    }
-    energies[block] = energy / ((end - start) * channels.length);
-  }
-  const gains = new Float64Array(energies.length);
-  for (let block = 0; block < energies.length; block += 1) {
-    const start = Math.max(0, block - 6);
-    const end = Math.min(energies.length, block + 7);
-    let baseline = 0;
-    for (let index = start; index < end; index += 1) baseline += energies[index];
-    baseline /= end - start;
-    // A 30% RMS correction retains natural movement; cap gain near silence.
-    gains[block] = energies[block] > 1e-10
-      ? clamp((baseline / energies[block]) ** 0.15, 0.8, 1.2) : 1;
-  }
-  for (let frame = 0; frame < frameCount; frame += 1) {
-    const position = Math.max(0, frame / blockSize - 0.5);
-    const block = Math.min(gains.length - 1, Math.floor(position));
-    const next = Math.min(gains.length - 1, block + 1);
-    const gain = gains[block] + (gains[next] - gains[block]) * (position - block);
-    // Keep the first 100ms intact, then introduce correction over 100ms.
-    const blend = clamp((frame / buffer.sampleRate - 0.1) / 0.1, 0, 1);
-    const correction = 1 + (gain - 1) * blend;
-    for (const channel of channels) channel[frame] *= correction;
-  }
-  return buffer;
-}
-
-function findSaxLoop(buffer) {
-  if (!Number.isFinite(buffer?.duration) || buffer.duration <= 0.4) return null;
-  const fallback = {
-    start: buffer.duration * SAX_LOOP_START_RATIO,
-    end: buffer.duration * ((SAX_LOOP_SEARCH_START_RATIO + SAX_LOOP_SEARCH_END_RATIO) / 2),
-  };
-  if (!Number.isFinite(buffer.numberOfChannels) || typeof buffer.getChannelData !== 'function') return fallback;
-
-  const channels = [];
-  for (let channelIndex = 0; channelIndex < buffer.numberOfChannels; channelIndex += 1) {
-    const channel = buffer.getChannelData(channelIndex);
-    if (channel?.length) channels.push(channel);
-  }
-  if (!channels.length) return fallback;
-
-  const frameCount = Math.min(...channels.map(({ length }) => length));
-  const sampleRate = Number.isFinite(buffer.sampleRate) && buffer.sampleRate > 0
-    ? buffer.sampleRate
-    : frameCount / buffer.duration;
-  const comparisonRadius = Math.min(48, Math.max(8, Math.floor(sampleRate * 0.001)));
-  const startIndex = Math.floor(frameCount * SAX_LOOP_START_RATIO);
-  const searchStart = Math.max(startIndex + comparisonRadius + 1, Math.floor(frameCount * SAX_LOOP_SEARCH_START_RATIO));
-  const searchEnd = Math.min(frameCount - comparisonRadius - 1, Math.floor(frameCount * SAX_LOOP_SEARCH_END_RATIO));
-  if (startIndex < comparisonRadius || searchStart >= searchEnd) return fallback;
-
-  let bestEnd = searchStart;
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (let candidate = searchStart; candidate <= searchEnd; candidate += 1) {
-    let score = 0;
-    for (const channel of channels) {
-      for (let offset = -comparisonRadius; offset <= comparisonRadius; offset += 4) {
-        const difference = channel[startIndex + offset] - channel[candidate + offset];
-        score += difference * difference;
-      }
-    }
-    if (score < bestScore) {
-      bestScore = score;
-      bestEnd = candidate;
-    }
-  }
-
-  return { start: startIndex / sampleRate, end: bestEnd / sampleRate };
+function sampleLoop(entry, buffer) {
+  const loop = entry?.loop;
+  if (!Number.isFinite(loop?.start) || !Number.isFinite(loop?.end)
+    || loop.start < 0 || loop.end <= loop.start || loop.end > buffer.duration) return null;
+  return { start: loop.start, end: loop.end };
 }
 
 export class ScorePlayer {
-  constructor({ instrumentId = 'saxophone', onPosition = () => {}, onEnded = () => {}, onStatus = () => {} } = {}) {
-    if (!INSTRUMENT_IDS.has(instrumentId)) throw new RangeError(`未知音色：${instrumentId}`);
+  constructor({ instrumentId = DEFAULT_INSTRUMENT_ID, onPosition = () => {}, onEnded = () => {}, onStatus = () => {} } = {}) {
+    if (!isInstrumentId(instrumentId)) throw new RangeError(`未知音色：${instrumentId}`);
     this._onPosition = onPosition;
     this._onEnded = onEnded;
     this._onStatus = onStatus;
@@ -158,7 +73,7 @@ export class ScorePlayer {
 
   get isPlaying() { return this._playIntent; }
   get soundMode() { return this._soundMode; }
-  get soundSource() { return this._soundMode === 'sample' ? 'sample' : this._soundMode === 'synthesized' ? 'synth' : null; }
+  get soundSource() { return this._soundMode === 'sample' || this._soundMode === 'mixed' ? this._soundMode : this._soundMode === 'synthesized' ? 'synth' : null; }
   get instrumentId() { return this._instrumentId; }
 
   async load(score) {
@@ -258,7 +173,7 @@ export class ScorePlayer {
   }
 
   async setInstrument(id) {
-    if (!INSTRUMENT_IDS.has(id)) throw new RangeError(`未知音色：${id}`);
+    if (!isInstrumentId(id)) throw new RangeError(`未知音色：${id}`);
     const operationId = ++this._operationId;
     const wasPlaying = this._playIntent;
     const beat = this.currentBeat;
@@ -332,12 +247,24 @@ export class ScorePlayer {
         this._sampleMaps.set(instrumentId, sampleMap);
       }
       const neededMidi = [...new Set((this._score?.notes || []).map(({ midi }) => Math.round(midi)))];
-      await Promise.all(neededMidi.map(async (midi) => {
-        if (buffers.has(midi)) return;
-        const sample = await this._findAudibleSample(instrumentId, sampleMap, midi);
-        if (!sample) throw new Error(`MIDI ${midi} 附近没有可听采样`);
-        buffers.set(midi, sample);
+      const loaded = await Promise.all(neededMidi.map(async (midi) => {
+        if (buffers.has(midi)) return true;
+        try {
+          const sample = await this._findAudibleSample(instrumentId, sampleMap, midi);
+          if (!sample) return false;
+          buffers.set(midi, sample);
+          return true;
+        } catch {
+          // A missing or broken note must not disable the other recordings.
+          return false;
+        }
       }));
+      const missing = loaded.filter((available) => !available).length;
+      if (missing) {
+        this._sampleFailureMessages.set(instrumentId, `${missing} 个音高超出采样覆盖范围或采样加载失败，已对这些音符使用合成音色。`);
+        return missing === neededMidi.length ? 'synthesized' : 'mixed';
+      }
+      this._sampleFailureMessages.delete(instrumentId);
       return 'sample';
     } catch (error) {
       this._sampleFailures.add(instrumentId);
@@ -350,7 +277,7 @@ export class ScorePlayer {
     if (soundMode === 'sample') {
       return instrumentId === 'piano'
         ? '正在使用 Tone.js Salamander Grand Piano 本地采样。'
-        : '正在使用 FluidR3_GM 中音萨克斯本地采样。';
+        : '正在使用 Karoryfer 萨克斯本地采样（tonejs-instruments 发行版）。';
     }
     return this._sampleFailureMessages.get(instrumentId) || '本地采样不可用，已切换到合成音色。';
   }
@@ -376,10 +303,11 @@ export class ScorePlayer {
     for (let distance = 0; distance <= SAMPLE_FALLBACK_SEMITONES; distance += 1) {
       const candidates = distance === 0 ? [targetMidi] : [targetMidi - distance, targetMidi + distance];
       for (const sourceMidi of candidates) {
-        if (!sampleMap[midiToSampleName(sourceMidi)]) continue;
+        const entry = sampleMap[midiToSampleName(sourceMidi)];
+        if (!entry) continue;
         const buffer = await this._decodeSample(instrumentId, sampleMap, sourceMidi);
         if (this._isAudibleBuffer(buffer)) {
-          return { buffer, sourceMidi, loop: instrumentId === 'saxophone' ? findSaxLoop(buffer) : null };
+          return { buffer, sourceMidi, loop: instrumentId === 'saxophone' ? sampleLoop(entry, buffer) : null };
         }
       }
     }
@@ -394,11 +322,14 @@ export class ScorePlayer {
     }
     if (!promises.has(midi)) {
       promises.set(midi, (async () => {
-        const response = await fetch(sampleMap[midiToSampleName(midi)]);
+        const entry = sampleMap[midiToSampleName(midi)];
+        const response = await fetch(typeof entry === 'string' ? entry : entry.url);
         if (!response.ok) throw new Error(`无法读取 MIDI ${midi} 的采样`);
-        const buffer = await this._context.decodeAudioData(await response.arrayBuffer());
-        return instrumentId === 'saxophone' ? softenSaxModulation(buffer) : buffer;
-      })());
+        return this._context.decodeAudioData(await response.arrayBuffer());
+      })().catch((error) => {
+        promises.delete(midi);
+        throw error;
+      }));
     }
     return promises.get(midi);
   }
@@ -483,7 +414,7 @@ export class ScorePlayer {
     const duration = Math.max(0.02, (note.startBeat + note.durationBeats - audibleStartBeat) * secondsPerBeat);
     const offset = Math.max(0, (audibleStartBeat - note.startBeat) * secondsPerBeat);
     const sample = this._sampleBuffers.get(this._instrumentId)?.get(Math.round(note.midi));
-    if (this._soundMode === 'sample' && sample) this._scheduleSample(note.midi, sample, when, duration, offset);
+    if ((this._soundMode === 'sample' || this._soundMode === 'mixed') && sample) this._scheduleSample(note.midi, sample, when, duration, offset);
     else this._scheduleSynth(note.midi, when, duration);
   }
 
@@ -506,20 +437,24 @@ export class ScorePlayer {
       envelope.gain.linearRampToValueAtTime(0.72, when + PIANO_ATTACK_SECONDS);
       envelope.gain.setValueAtTime(0.72, when + duration);
       envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration + PIANO_RELEASE_SECONDS);
-    } else if (loop) {
-      envelope.gain.linearRampToValueAtTime(0.46, when + SAX_ATTACK_SECONDS);
-      source.loop = true;
-      source.loopStart = loop.start;
-      source.loopEnd = loop.end;
-      envelope.gain.setValueAtTime(0.46, when + duration);
-      envelope.gain.linearRampToValueAtTime(0.0001, when + duration + SAX_RELEASE_SECONDS);
     } else {
-      envelope.gain.linearRampToValueAtTime(0.5, when + 0.015);
-      envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration + 0.12);
+      // The recording carries the tongue/breath attack and sustained dynamics.
+      envelope.gain.linearRampToValueAtTime(0.3, when + SAX_ATTACK_SECONDS);
+      if (loop) {
+        source.loop = true;
+        source.loopStart = loop.start;
+        source.loopEnd = loop.end;
+      }
+      envelope.gain.setValueAtTime(0.3, when + duration);
+      envelope.gain.linearRampToValueAtTime(0.0001, when + duration + SAX_RELEASE_SECONDS);
     }
     this._trackSource(source);
-    source.start(when, Math.min(offset * playbackRate, Math.max(0, buffer.duration - 0.02)));
-    const release = this._instrumentId === 'piano' ? PIANO_RELEASE_SECONDS : loop ? SAX_RELEASE_SECONDS : 0.14;
+    let sampleOffset = offset * playbackRate;
+    if (source.loop && sampleOffset >= loop.end) {
+      sampleOffset = loop.start + (sampleOffset - loop.start) % (loop.end - loop.start);
+    }
+    source.start(when, Math.min(sampleOffset, Math.max(0, buffer.duration - 0.02)));
+    const release = this._instrumentId === 'piano' ? PIANO_RELEASE_SECONDS : SAX_RELEASE_SECONDS;
     source.stop(when + duration + release);
   }
 

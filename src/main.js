@@ -56,7 +56,7 @@ const player = new ScorePlayer({
   },
   onStatus: ({ soundMode, message }) => {
     updateSoundSourceLabel(false, soundMode);
-    if (message && soundMode === 'synthesized') setPracticeTip('音源提示', message, 'warning');
+    if (message && (soundMode === 'synthesized' || soundMode === 'mixed')) setPracticeTip('音源提示', message, 'warning');
   },
 });
 
@@ -508,6 +508,7 @@ function updateSoundSourceLabel(loading = false, reportedMode = '') {
   if (loading) return void (ui.soundSource.textContent = '正在加载音色…');
   const source = reportedMode || player.soundMode || player.soundSource || player.audioSource || player.instrumentSource || player.sourceType;
   if (source === 'sample' || source === 'sampled' || source === 'soundfont') ui.soundSource.textContent = '采样音色';
+  else if (source === 'mixed') ui.soundSource.textContent = '采样音色 · 部分音符使用合成';
   else if (source === 'synth' || source === 'synthesized') ui.soundSource.textContent = '合成音色';
   else if (player.isUsingSamples === true) ui.soundSource.textContent = '采样音色';
   else if (player.isUsingSamples === false) ui.soundSource.textContent = '合成音色';

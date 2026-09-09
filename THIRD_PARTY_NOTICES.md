@@ -32,7 +32,7 @@
 
 运行依赖的实际版权及许可证正文集中保存在 [public/third-party-licenses.txt](public/third-party-licenses.txt)，随前端构建发布；生产 `node_modules` 同时保留 npm 包自带的文件。这个集合只覆盖脚本明确收集的文件，不声称覆盖全部可选、构建、字体或上游内嵌组件。
 
-## 钢琴与中音萨克斯音色
+## 钢琴与萨克斯音色
 
 ### Salamander 三角钢琴
 
@@ -40,16 +40,13 @@
 
 许可为 **Creative Commons Attribution 3.0 Unported（CC BY 3.0）**；允许商业使用、再分发和改编，需署名、附许可链接、说明改动，不得暗示原作者背书。本项目未修改 MP3 字节，只创建本地路径映射；播放器保留采样自然衰减，并在松键后释放尾音。完整许可、固定来源和每个文件的 SHA-256 见 [钢琴来源记录](public/soundfonts/piano/SOURCE.md)、[CC BY 3.0 正文](public/soundfonts/piano/LICENSE-CC-BY-3.0.txt) 和 [SHA256SUMS](public/soundfonts/piano/SHA256SUMS)，它们随镜像一起分发。
 
-### FluidR3 中音萨克斯
+### tonejs-instruments 萨克斯
 
-`public/soundfonts/saxophone.json` 来自 MIDI.js Soundfonts 的 FluidR3_GM alto saxophone MP3。此音源未在本次更换。
+萨克斯使用 [`nbrosowsky/tonejs-instruments` 固定提交](https://github.com/nbrosowsky/tonejs-instruments/tree/622c2f1c32c8cfce4158ddc3eb26e518ddef37e5/samples/saxophone)中的 32 个 MP3 根采样。上游来源表将它们归于 Karoryfer，但没有列出具体演奏者或录音作者，也没有证明这些文件是中音萨克斯录音，因此本项目仅使用通用名称“萨克斯”。
 
-- 原始 Fluid (R3) SoundFont：Frank Wen，原始 README / COPYING 声明为 MIT。保留其版权和完整许可，来源见 [Fluid SoundFont COPYING](https://github.com/pianobooster/fluid-soundfont/blob/master/COPYING)。
-- 预渲染发行层：Benjamin Gleitzman 及 MIDI.js Soundfonts 贡献者，其 [README](https://github.com/gleitz/midi-js-soundfonts/blob/gh-pages/README.md) 将 FluidR3_GM 样本列为 [CC BY 3.0 US](https://creativecommons.org/licenses/by/3.0/us/legalcode.en)。本项目保留署名、许可链接及修改说明，不把此发行层改称为 MIT。
-- 本项目移除了原 JavaScript 变量包装并将样本映射保存为 JSON，音频字节未修改。原始 MIT 全文与发行层声明见 [音色许可证](public/asset-licenses.txt)。
-- [样本来源](https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/alto_sax-mp3.js)；当前 `saxophone.json` SHA-256：`aab5e8b4a0d7a3b6a5c28f8639414bb760dcee47eb421a77728f6482509aa90e`。原始导入提交未记录。
+上游将样本声明为 **Creative Commons Attribution 3.0 Unported（CC BY 3.0）**。本项目原样再分发 MP3 字节；样本映射保存本地 URL 以及离线生成的循环起止点。播放器按乐谱音高按需加载独立根采样，保留录音中的自然变化，并在长音中使用循环点；距最近根音不超过 12 半音时移调，超出覆盖范围或个别采样加载失败时仅该音符使用合成音色。
 
-这些采样不因 easy-score 自有代码采用 MIT 而改变许可。旧版本中的 FluidR3 钢琴已从当前发行资源移除，其历史版本继续适用原有声明。
+完整许可、固定来源、根音清单和每个文件的 SHA-256 见 [萨克斯来源记录](public/soundfonts/saxophone/SOURCE.md)、[CC BY 3.0 正文](public/soundfonts/saxophone/LICENSE-CC-BY-3.0.txt) 和 [SHA256SUMS](public/soundfonts/saxophone/SHA256SUMS)，它们随镜像一起分发。这些采样不因 easy-score 自有代码采用 MIT 而改变许可。
 
 ## 思源黑体网页字体
 

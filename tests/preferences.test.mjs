@@ -11,9 +11,9 @@ function memoryStorage(initial = {}) {
   };
 }
 
-test('preferences default to alto sax and automatic row layout', () => {
+test('preferences default to piano and automatic row layout', () => {
   assert.deepEqual(loadPreferences(memoryStorage()), {
-    instrumentId: 'saxophone',
+    instrumentId: 'piano',
     measuresPerRow: 'auto',
   });
 });
@@ -21,7 +21,7 @@ test('preferences default to alto sax and automatic row layout', () => {
 test('preferences restore automatic layout and previously saved numeric layouts', () => {
   assert.deepEqual(loadPreferences(memoryStorage({
     'easy-score.measures-per-row': 'auto',
-  })), { instrumentId: 'saxophone', measuresPerRow: 'auto' });
+  })), { instrumentId: 'piano', measuresPerRow: 'auto' });
 
   assert.deepEqual(loadPreferences(memoryStorage({
     'easy-score.instrument': 'piano',
@@ -33,7 +33,7 @@ test('preferences reject stale values', () => {
   assert.deepEqual(loadPreferences(memoryStorage({
     'easy-score.instrument': 'organ',
     'easy-score.measures-per-row': '12',
-  })), { instrumentId: 'saxophone', measuresPerRow: 'auto' });
+  })), { instrumentId: 'piano', measuresPerRow: 'auto' });
 });
 
 test('preference writers persist only supported values', () => {
@@ -53,7 +53,11 @@ test('restricted storage falls back safely and write failures stay non-fatal', (
     getItem() { throw new Error('blocked'); },
     setItem() { throw new Error('quota'); },
   };
-  assert.deepEqual(loadPreferences(storage), { instrumentId: 'saxophone', measuresPerRow: 'auto' });
+  assert.deepEqual(loadPreferences(storage), { instrumentId: 'piano', measuresPerRow: 'auto' });
   assert.equal(saveInstrument(storage, 'piano'), false);
   assert.equal(saveMeasuresPerRow(storage, 6), false);
+});
+
+test('an explicitly saved saxophone choice still overrides the piano default', () => {
+  assert.equal(loadPreferences(memoryStorage({ 'easy-score.instrument': 'saxophone' })).instrumentId, 'saxophone');
 });

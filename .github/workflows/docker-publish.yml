@@ -112,3 +112,10 @@ jobs:
             echo "$IMAGE_TAGS"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update Docker Hub overview
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: node scripts/publish-dockerhub-readme.mjs

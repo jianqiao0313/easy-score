@@ -4,14 +4,14 @@
 
 网页版五线谱识别与播放器。可识别 PDF、PNG 和 JPEG 印刷乐谱，也可直接导入 MusicXML；使用 OpenSheetMusicDisplay 显示五线谱，并通过 Web Audio 播放钢琴或萨克斯音色。
 
-当前稳定版本：[1.0.3](https://github.com/jianqiao0313/easy-score/releases/tag/v1.0.3)。Docker 标签 `1.0.3` 对应此版本，`latest` 跟随 `main` 的最新构建。
+当前稳定版本：[1.0.4](https://github.com/jianqiao0313/easy-score/releases/tag/v1.0.4)。Docker 标签 `1.0.4` 对应此版本，`latest` 跟随 `main` 的最新构建。
 
 ## 使用 Docker 启动
 
 镜像已发布到 [Docker Hub](https://hub.docker.com/r/jianqiao0313/easy-score)，包含完整识谱引擎和音色，无需额外安装 Java 或 Audiveris。
 
 ```sh
-docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.3
+docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data jianqiao0313/easy-score:1.0.4
 ```
 
 打开 [http://localhost:4173](http://localhost:4173)。导入的原文件、识别或解析结果以及历史记录保存在 `easy-score-data` 数据卷中；更新镜像时保留该卷即可。
@@ -20,10 +20,10 @@ docker run -d --name easy-score -p 127.0.0.1:4173:4173 -v easy-score-data:/data 
 
 默认端口只允许本机访问；需要远程访问时，可通过反向代理提供服务。应用没有账户和登录功能，适合个人使用或可信网络部署。
 
-更新镜像时，将拉取和启动命令中的标签统一设置为目标版本（以下以 `1.0.3` 为例），并继续使用原数据卷：
+更新镜像时，将拉取和启动命令中的标签统一设置为目标版本（以下以 `1.0.4` 为例），并继续使用原数据卷：
 
 ```sh
-docker pull jianqiao0313/easy-score:1.0.3
+docker pull jianqiao0313/easy-score:1.0.4
 docker stop easy-score
 docker rm easy-score
 # 再次执行上面的 docker run 命令，继续使用原数据卷。
@@ -106,7 +106,7 @@ node scripts/verify-live.mjs /path/to/score.pdf
 - `tests/`：解析、播放、偏好设置和服务测试。
 - `Dockerfile`、`compose.yaml`、`docker/`：镜像构建、运行配置和容器识谱验证。
 
-推送到 `main` 后，[GitHub Actions](https://github.com/jianqiao0313/easy-score/actions) 自动测试、构建并验证容器，再发布 `latest` 和 `sha-完整提交号` 镜像。版本标签 `v1.2.3` 会发布 `1.2.3` 和 `1.2` 标签；Pull Request 只验证，不发布。Fork 后若需发布到自己的 Docker Hub，请配置仓库变量 `DOCKERHUB_USERNAME` 和 Secret `DOCKERHUB_TOKEN`。
+推送到 `main` 后，[GitHub Actions](https://github.com/jianqiao0313/easy-score/actions) 自动测试、构建并验证容器，再发布 `latest` 和 `sha-完整提交号` 镜像。版本标签 `v1.2.3` 会发布 `1.2.3` 和 `1.2` 标签，并将 `docker/README.md` 同步到 Docker Hub 说明页；Pull Request 只验证，不发布。Fork 后若需发布到自己的 Docker Hub，请配置仓库变量 `DOCKERHUB_USERNAME` 和 Secret `DOCKERHUB_TOKEN`。
 
 ## 开源协议与第三方组件
 

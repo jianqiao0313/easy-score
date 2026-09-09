@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { strToU8, zipSync } from 'fflate';
 import { parseMusicXML } from '../src/musicxml.mjs';
+import { verifyPublicAssets } from './public-assets.mjs';
 
 const image = process.argv[2] || 'easy-score:local';
 const name = `easy-score-smoke-${process.pid}`;
@@ -212,33 +213,7 @@ try {
       if (!readFileSync(file, 'utf8').trim()) throw new Error('Missing license record: ' + file);
     }
   `);
-  for (const [file, names] of [
-    ['third-party-licenses.txt', ['PhonicScore', 'Jean-loup Gailly']],
-    ['asset-licenses.txt', ['Frank Wen', 'Creative Commons Attribution 3.0 US']],
-    ['fonts/LICENSE.txt', ['Adobe', 'SIL OPEN FONT LICENSE']],
-    ['soundfonts/piano/SOURCE.md', ['Alexander Holm', 'CC BY 3.0']],
-    ['soundfonts/piano/LICENSE-CC-BY-3.0.txt', ['CREATIVE COMMONS']],
-  ]) {
-    const licenses = await fetch(`${baseUrl}/${file}`);
-    const licenseText = await licenses.text();
-    if (!licenses.ok || names.some((author) => !licenseText.includes(author))) {
-      throw new Error(`third-party license notices were not served: ${file}`);
-    }
-  }
-
-  const font = await fetch(`${baseUrl}/fonts/SourceHanSansCN-VF.otf.woff2`);
-  const fontBytes = Buffer.from(await font.arrayBuffer());
-  if (!font.ok || font.headers.get('content-type') !== 'font/woff2' || fontBytes.subarray(0, 4).toString() !== 'wOF2') {
-    throw new Error('local Source Han Sans web font was not served');
-  }
-  const pianoMap = await (await fetch(`${baseUrl}/soundfonts/piano.json`)).json();
-  if (Object.keys(pianoMap).length !== 30 || !pianoMap.C4?.startsWith('/soundfonts/piano/')) {
-    throw new Error('local Salamander piano sample map was not served');
-  }
-  const pianoSample = await fetch(`${baseUrl}${pianoMap.C4}`);
-  if (!pianoSample.ok || pianoSample.headers.get('content-type') !== 'audio/mpeg' || (await pianoSample.arrayBuffer()).byteLength < 1000) {
-    throw new Error('local Salamander piano sample was not served');
-  }
+  await verifyPublicAssets(baseUrl);
 
   const musicXmlBytes = Buffer.from(DIRECT_MUSIC_XML);
   const musicXmlId = await uploadDirectScore(baseUrl, musicXmlBytes, {

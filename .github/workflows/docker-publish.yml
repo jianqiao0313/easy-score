@@ -117,5 +117,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: node scripts/publish-dockerhub-readme.mjs
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_DESCRIPTION_TOKEN }}
+        run: |
+          if [[ -z "$DOCKERHUB_TOKEN" ]]; then
+            echo '::notice::Docker Hub overview was not updated. Optional DOCKERHUB_DESCRIPTION_TOKEN requires repository management permission (PAT read/write/delete); image publishing only needs DOCKERHUB_TOKEN with write permission.'
+            exit 0
+          fi
+          node scripts/publish-dockerhub-readme.mjs

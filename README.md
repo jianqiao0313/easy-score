@@ -106,7 +106,9 @@ node scripts/verify-live.mjs /path/to/score.pdf
 - `tests/`：解析、播放、偏好设置和服务测试。
 - `Dockerfile`、`compose.yaml`、`docker/`：镜像构建、运行配置和容器识谱验证。
 
-推送到 `main` 后，[GitHub Actions](https://github.com/jianqiao0313/easy-score/actions) 自动测试、构建并验证容器，再发布 `latest` 和 `sha-完整提交号` 镜像。版本标签 `v1.2.3` 会发布 `1.2.3` 和 `1.2` 标签，并将 `docker/README.md` 同步到 Docker Hub 说明页；Pull Request 只验证，不发布。Fork 后若需发布到自己的 Docker Hub，请配置仓库变量 `DOCKERHUB_USERNAME` 和 Secret `DOCKERHUB_TOKEN`。
+推送到 `main` 后，[GitHub Actions](https://github.com/jianqiao0313/easy-score/actions) 自动测试、构建并验证容器，再发布 `latest` 和 `sha-完整提交号` 镜像。版本标签 `v1.2.3` 会发布 `1.2.3` 和 `1.2` 标签；Pull Request 只验证，不发布。Fork 后若需发布到自己的 Docker Hub，请配置仓库变量 `DOCKERHUB_USERNAME` 和 Secret `DOCKERHUB_TOKEN`（镜像写入权限）。
+
+Docker Hub 说明页同步使用单独的可选 Secret `DOCKERHUB_DESCRIPTION_TOKEN`。该接口需要仓库管理权限；使用 PAT 时需 `read/write/delete` 范围，只有镜像写入权限的 Token 会返回 `403`。配置后，版本标签发布会同步 `docker/README.md` 并读取公开正文核验；未配置时会明确提示跳过说明页，镜像仍正常发布。无需为镜像推送扩大 Token 权限。
 
 ## 开源协议与第三方组件
 
